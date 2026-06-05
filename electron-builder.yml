@@ -1,0 +1,54 @@
+appId: com.compty.ate-intelligence
+productName: ATE Intelligence
+copyright: Copyright © 2024 Compty
+
+# Directories
+directories:
+  output: dist-electron
+  buildResources: electron/assets
+
+
+# Files to include in the package
+files:
+  - electron/**/*
+  - backend/dist/**/*
+  - backend/package.json
+  - backend/node_modules/**/*
+  - frontend/.next/**/*
+  - frontend/public/**/*
+  - frontend/package.json
+  - frontend/node_modules/**/*
+  - .env
+  - "!**/.git/**"
+  - "!**/node_modules/**/*.md"
+  - "!**/node_modules/**/*.map"
+  - "!**/*.ts"
+
+# Extra resources (redis binary)
+extraResources:
+  - from: electron/assets/redis
+    to: redis
+    filter:
+      - "*.exe"
+      - "*.conf"
+
+# Windows installer
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: electron/assets/icon.ico
+
+# NSIS Installer options
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  installerIcon: electron/assets/icon.ico
+  uninstallerIcon: electron/assets/icon.ico
+  installerHeaderIcon: electron/assets/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ATE Intelligence
+

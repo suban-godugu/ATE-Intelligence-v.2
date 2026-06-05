@@ -1,0 +1,420 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../backend/node_modules/.prisma/client"
+}
+
+model Fab {
+  id         String   @id @default(cuid())
+  name       String
+  location   String?
+  createdAt  DateTime @default(now())
+  lots       Lot[]
+  testers    Tester[]
+}
+
+model Tester {
+  id              String   @id @default(cuid())
+  name            String
+  equipmentRate   Float    // USD per second
+  fabId           String
+  fab             Fab      @relation(fields: [fabId], references: [id])
+  lots            Lot[]
+}
+
+model Lot {
+  id          String    @id @default(cuid())
+  lotId       String    @unique  // e.g. "LOT-2024-001"
+  fabId       String
+  testerId    String
+  status      LotStatus @default(IN_TEST)
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  fab         Fab       @relation(fields: [fabId], references: [id])
+  tester      Tester    @relation(fields: [testerId], references: [id])
+  wafers          Wafer[]
+  patternAnalyses PatternAnalysis[]
+  mbistResults    MbistResult[]
+  lbistResults    LbistResult[]
+  bistResults     BistResult[]
+
+  @@index([fabId, status])
+  @@index([fabId])
+  @@index([status])
+}
+
+enum LotStatus {
+  ACTIVE
+  IN_TEST
+  COMPLETED
+}
+
+model Wafer {
+  id         String    @id @default(cuid())
+  waferId    String    // e.g. "01"
+  lotId      String
+  lot           Lot            @relation(fields: [lotId], references: [id])
+  dies          Die[]
+  redundancyMaps RedundancyMap[]
+  waferImages   WaferImage[]
+  @@unique([lotId, waferId])
+  @@index([lotId])
+}
+
+model Die {
+  id          String   @id @default(cuid())
+  waferId     String
+  x           Int
+  y           Int
+  bin         Int      @default(1)
+  failType    String?
+  wafer       Wafer    @relation(fields: [waferId], references: [id])
+  testResults TestResult[]
+
+  @@index([waferId])
+}
+
+model Pattern {
+  id           String      @id @default(cuid())
+  patternId    String      @unique  // e.g. "PAT-SCAN-001"
+  patternType  PatternType
+  killRatio        Float             @default(1.0)
+  testResults      TestResult[]
+  patternAnalyses  PatternAnalysis[]
+}
+
+enum PatternType {
+  SCAN
+  BIST
+  ATPG
+  FUNC
+  IDDQ
+  MBST
+  BSCA
+}
+
+model TestResult {
+  id           String   @id @default(cuid())
+  dieId        String
+  patternId    String
+  testTimeMs   Float
+  passed       Boolean
+  costUsd      Float
+  testedAt     DateTime @default(now())
+  die          Die      @relation(fields: [dieId], references: [id])
+  pattern      Pattern  @relation(fields: [patternId], references: [id])
+
+  @@index([dieId])
+  @@index([patternId])
+  @@index([patternId, dieId])
+  @@index([dieId, patternId])
+}
+
+model DashboardSnapshot {
+  id                   String   @id @default(uuid()) @db.Uuid
+  snapshotAt           DateTime
+  fabId                String?
+  lotId                String?
+  totalTestCost        Decimal  @db.Decimal(12, 2)
+  costPerWafer         Decimal  @db.Decimal(10, 4)
+  costPerDie           Decimal  @db.Decimal(10, 6)
+  testTimeAvgMs        Decimal  @db.Decimal(10, 2)
+  yieldOverall         Decimal  @db.Decimal(5, 2)
+  roiImprovement       Decimal  @db.Decimal(12, 2)
+  totalDies            Int
+  passingDies          Int
+  failedDies           Int
+  patternCount         Int
+  redundantPatternCount Int
+  computedAt           DateTime @default(now())
+
+  @@index([snapshotAt(sort: Desc), fabId, lotId])
+}
+
+model OptimizationJob {
+  id          String    @id @default(cuid())
+  jobId       String    @unique
+  lotId       String
+  fabId       String
+  constraints Json
+  status      JobStatus @default(QUEUED)
+  results     Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+// ─── Pattern Analysis Platform Models ────────────────────────────────────────
+
+enum FaultClass {
+  STUCK_AT
+  TRANSITION
+  CELL_AWARE
+  IDDQ
+  BRIDGE
+  PATH_DELAY
+}
+
+enum PatternDomain {
+  SCAN_CHAIN
+  ATPG_TRANSITION
+  ATPG_STUCK_AT
+  MBIST
+  LBIST
+  BIST
+  IDDQ
+  BSCA
+}
+
+enum CoverageType {
+  FAULT_COVERAGE
+  TOGGLE_COVERAGE
+  STRUCTURAL
+  FUNCTIONAL
+  TRANSITION
+}
+
+enum RedundancyType {
+  COLUMN
+  ROW
+  WORD
+  BIT
+  LOCAL
+  GLOBAL
+}
+
+enum PatternAnalysisStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+model PatternAnalysis {
+  id              String                @id @default(cuid())
+  lotId           String
+  patternId       String
+  domain          PatternDomain
+  faultClass      FaultClass
+  totalPatterns   Int
+  faultsCovered   Int
+  faultsDetected  Int
+  faultsUntested  Int
+  coveragePct     Float
+  executionTimeMs Float
+  passCount       Int
+  failCount       Int
+  status          PatternAnalysisStatus @default(COMPLETE)
+  analyzedAt      DateTime              @default(now())
+  lot             Lot                   @relation(fields: [lotId], references: [id])
+  pattern         Pattern               @relation(fields: [patternId], references: [id])
+  failSites       FailSite[]
+  scanChainResults ScanChainResult[]
+  coverageMetrics  CoverageMetric[]
+
+  @@index([lotId, domain])
+  @@index([analyzedAt(sort: Desc)])
+}
+
+model FailSite {
+  id                String          @id @default(cuid())
+  patternAnalysisId String
+  dieX              Int
+  dieY              Int
+  waferId           String
+  faultClass        FaultClass
+  cycleCount        Int
+  failAddress       String?
+  bitPosition       Int?
+  wordAddress       Int?
+  severity          Int             @default(1)  // 1-5
+  patternAnalysis   PatternAnalysis @relation(fields: [patternAnalysisId], references: [id])
+
+  @@index([patternAnalysisId, faultClass])
+}
+
+model ScanChainResult {
+  id                String          @id @default(cuid())
+  patternAnalysisId String
+  chainId           String
+  chainLength       Int
+  shiftCycles       Int
+  captureWindows    Int
+  passRate          Float
+  cellsFailed       Int
+  cellsPassed       Int
+  stitchedBridges   Int             @default(0)
+  patternAnalysis   PatternAnalysis @relation(fields: [patternAnalysisId], references: [id])
+
+  @@index([patternAnalysisId])
+}
+
+model CoverageMetric {
+  id                String          @id @default(cuid())
+  patternAnalysisId String
+  coverageType      CoverageType
+  achieved          Float
+  target            Float
+  gap               Float
+  faultCount        Int
+  coveredFaults     Int
+  patternAnalysis   PatternAnalysis @relation(fields: [patternAnalysisId], references: [id])
+
+  @@index([patternAnalysisId, coverageType])
+}
+
+model MbistResult {
+  id              String   @id @default(cuid())
+  lotId           String
+  memoryCellId    String
+  algorithm       String   // MARCH C-, MATS++, GALPAT
+  wordLines       Int
+  bitLines        Int
+  retentionTimeMs Float
+  passCount       Int
+  failCount       Int
+  failAddresses   Json     @default("[]")
+  coveragePct     Float
+  testedAt        DateTime @default(now())
+  lot             Lot      @relation(fields: [lotId], references: [id])
+
+  @@index([lotId])
+  @@index([testedAt(sort: Desc)])
+}
+
+model LbistResult {
+  id              String   @id @default(cuid())
+  lotId           String
+  logicBlockId    String
+  seedValue       String
+  clockCycles     Int
+  signaturePassed Boolean
+  expectedSignature String
+  actualSignature   String
+  coveragePct     Float
+  testedAt        DateTime @default(now())
+  lot             Lot      @relation(fields: [lotId], references: [id])
+
+  @@index([lotId])
+}
+
+model BistResult {
+  id            String   @id @default(cuid())
+  lotId         String
+  bistType      String   // MBIST | LBIST | ABIST
+  blockId       String
+  testMode      String
+  passCount     Int
+  failCount     Int
+  coveragePct   Float
+  durationMs    Float
+  testedAt      DateTime @default(now())
+  lot           Lot      @relation(fields: [lotId], references: [id])
+
+  @@index([lotId, bistType])
+}
+
+model RedundancyMap {
+  id              String         @id @default(cuid())
+  waferId         String
+  dieX            Int
+  dieY            Int
+  redundancyType  RedundancyType
+  address         Int
+  repaired        Boolean        @default(false)
+  repairAddress   Int?
+  faultCount      Int            @default(0)
+  available       Boolean        @default(true)
+  analyzedAt      DateTime       @default(now())
+  wafer           Wafer          @relation(fields: [waferId], references: [id])
+
+  @@unique([waferId, dieX, dieY, redundancyType, address])
+  @@index([waferId, repaired])
+}
+
+model AiWafer {
+  id            String   @id @default(cuid())
+  name          String
+  class         String
+  confidence    Float
+  lot           String   // e.g. "LOT_1", "LOT_3"
+  good          Int
+  fail          Int
+  total         Int
+  yield         Float
+  probabilities Json     // full class probability map
+  waferImageId  String?
+  timestamp     DateTime @default(now())
+
+  @@unique([lot, name])
+}
+
+model WaferImage {
+  id             String          @id @default(uuid())
+  waferId        String
+  wafer          Wafer           @relation(fields: [waferId], references: [id], onDelete: Cascade)
+  aiWaferId      String?
+  imageType      WaferImageType
+  storageBackend StorageBackend  @default(POSTGRES)
+  rawBytes       Bytes?
+  storageKey     String?
+  mimeType       String          @default("image/png")
+  fileSizeBytes  Int
+  width          Int?
+  height         Int?
+  createdAt      DateTime        @default(now())
+
+  @@index([waferId])
+  @@index([waferId, imageType])
+  @@unique([waferId, imageType])
+}
+
+enum WaferImageType {
+  RAW_BIN_MAP
+  DEFECT_MASK
+  GRADCAM_OVERLAY
+  PROCESSED_THUMBNAIL
+}
+
+enum StorageBackend {
+  POSTGRES
+  MINIO
+}
+
+model AteDftFile {
+  id           Int      @id @default(autoincrement())
+  fileId       String   @unique
+  fileName     String
+  filePath     String
+  detectedType String   @default("UNKNOWN")
+  confidence   Float    @default(0)
+  status       String   @default("uploaded")
+  parserUsed   String?
+  uploadTime   DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("ate_dft_files")
+}
+
+model AteDftPrediction {
+  id             Int      @id @default(autoincrement())
+  fileId         String
+  module         String
+  prediction     String
+  riskScore      Float    @default(0)
+  recommendation String?
+  featuresJson   String?
+  createdAt      DateTime @default(now())
+
+  @@map("ate_dft_predictions")
+}

@@ -1,0 +1,30 @@
+{
+  "name": "ate-intelligence",
+  "version": "1.0.0",
+  "description": "ATE Intelligence Cost Optimization Platform",
+  "author": "Compty",
+  "main": "electron/main.js",
+  "scripts": {
+    "redis:setup": "wsl -- bash -c \"redis-server --port 6379 --daemonize yes --logfile /tmp/redis.log --bind 127.0.0.1 2>/dev/null; redis-cli config set protected-mode no\"",
+    "dev:backend": "cd backend && npm run start:dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:ai": "cd \"ai wafer dashbooad\" && ..\\.venv\\Scripts\\uvicorn.exe api:app --host 127.0.0.1 --port 8000",
+    "dev": "npm run redis:setup && concurrently --kill-others -n \"AI,BACKEND,FRONTEND\" -c \"cyan,green,blue\" \"npm run dev:ai\" \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "electron:dev": "npm run redis:setup && concurrently --kill-others -n \"BACKEND,FRONTEND,ELECTRON\" -c \"green,blue,cyan\" \"npm run dev:backend\" \"npm run dev:frontend\" \"wait-on http://localhost:3000 && electron .\"",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "electron:build": "npm run build:backend && npm run build:frontend",
+    "electron:dist": "npm run electron:build && electron-builder --win --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.1",
+    "electron": "^42.3.3",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "prisma": "^5.19.0",
+    "wait-on": "^9.0.10"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.19.0"
+  }
+}
