@@ -27,6 +27,7 @@ module.exports = {
     'frontend/package.json',
     'frontend/node_modules/**/*',
     '.env',
+    'db/prisma/**/*',
     '!**/.git/**',
     '!**/node_modules/**/*.md',
     '!**/node_modules/**/*.map',

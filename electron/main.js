@@ -95,6 +95,42 @@ function startRedis() {
   return proc;
 }
 
+// ── Run Prisma Database Migrations ─────────────────────────────────────────
+function runMigrations() {
+  if (isDev) return Promise.resolve(); // In dev mode, migrations are managed via CLI
+
+  const prismaCli = path.join(BACKEND_DIR, 'node_modules', 'prisma', 'build', 'index.js');
+  const schemaFile = path.join(ROOT, 'db', 'prisma', 'schema.prisma');
+
+  if (!fs.existsSync(prismaCli) || !fs.existsSync(schemaFile)) {
+    console.warn('[Migration] Prisma CLI or schema file not found, skipping auto-migration');
+    return Promise.resolve();
+  }
+
+  console.log('[Migration] Running database migrations...');
+  return new Promise((resolve) => {
+    const proc = fork(prismaCli, ['migrate', 'deploy', `--schema=${schemaFile}`], {
+      cwd: BACKEND_DIR,
+      silent: true,
+      env: {
+        ...process.env,
+      },
+    });
+
+    proc.stdout?.on('data', d => console.log('[Migration]', d.toString().trim()));
+    proc.stderr?.on('data', d => console.error('[Migration]', d.toString().trim()));
+
+    proc.on('close', code => {
+      if (code === 0) {
+        console.log('[Migration] Database migrations applied successfully.');
+      } else {
+        console.error(`[Migration] Migrations failed with exit code: ${code}`);
+      }
+      resolve(); // Continue startup anyway (app will report DB errors if failed)
+    });
+  });
+}
+
 // ── Start NestJS Backend ───────────────────────────────────────────────────
 function startBackend() {
   const entryFile = isDev
@@ -224,6 +260,9 @@ app.whenReady().then(async () => {
     // 2. Start services
     startRedis();
     await waitForPort(REDIS_PORT).catch(() => console.warn('Redis not ready, continuing...'));
+
+    // Run database migrations on startup
+    await runMigrations();
 
     startBackend();
     await waitForPort(BACKEND_PORT, '127.0.0.1', 90000);
