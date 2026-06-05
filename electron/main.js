@@ -114,12 +114,13 @@ function startBackend() {
       shell: true,
     });
   } else {
-    proc = spawn('node', [entryFile], {
+    proc = spawn(process.execPath, [entryFile], {
       cwd: BACKEND_DIR,
       env: {
         ...process.env,
         NODE_ENV: 'production',
         PORT: String(BACKEND_PORT),
+        ELECTRON_RUN_AS_NODE: '1',
       },
       stdio: 'pipe',
       windowsHide: true,
@@ -136,8 +137,9 @@ function startBackend() {
 function startFrontend() {
   if (isDev) return null; // In dev, Next.js dev server is run separately
 
-  const proc = spawn('node', [
-    path.join(FRONTEND_DIR, 'node_modules', '.bin', 'next'),
+  const frontendEntry = path.join(FRONTEND_DIR, 'node_modules', 'next', 'dist', 'bin', 'next');
+  const proc = spawn(process.execPath, [
+    frontendEntry,
     'start',
     '--port', String(FRONTEND_PORT)
   ], {
@@ -147,6 +149,7 @@ function startFrontend() {
       NODE_ENV: 'production',
       PORT: String(FRONTEND_PORT),
       NEXT_PUBLIC_API_URL: `http://localhost:${BACKEND_PORT}/api`,
+      ELECTRON_RUN_AS_NODE: '1',
     },
     stdio: 'pipe',
     windowsHide: true,
