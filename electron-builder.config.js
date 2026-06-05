@@ -10,6 +10,7 @@ module.exports = {
   appId: 'com.compty.ate-intelligence',
   productName: 'ATE Intelligence',
   copyright: 'Copyright © 2024 Compty',
+  asar: true,
 
   directories: {
     output: 'dist-electron',

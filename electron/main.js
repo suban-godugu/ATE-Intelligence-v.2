@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, shell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, fork } = require('child_process');
 const path = require('path');
 const net = require('net');
 const fs = require('fs');
@@ -114,16 +114,15 @@ function startBackend() {
       shell: true,
     });
   } else {
-    proc = spawn(process.execPath, [entryFile], {
+    // In production, use fork() because it natively supports loading JS files inside the ASAR archive
+    proc = fork(entryFile, [], {
       cwd: BACKEND_DIR,
+      silent: true,
       env: {
         ...process.env,
         NODE_ENV: 'production',
         PORT: String(BACKEND_PORT),
-        ELECTRON_RUN_AS_NODE: '1',
       },
-      stdio: 'pipe',
-      windowsHide: true,
     });
   }
 
@@ -138,21 +137,17 @@ function startFrontend() {
   if (isDev) return null; // In dev, Next.js dev server is run separately
 
   const frontendEntry = path.join(FRONTEND_DIR, 'node_modules', 'next', 'dist', 'bin', 'next');
-  const proc = spawn(process.execPath, [
-    frontendEntry,
-    'start',
-    '--port', String(FRONTEND_PORT)
-  ], {
+  
+  // Use fork() to run Next.js inside the ASAR archive
+  const proc = fork(frontendEntry, ['start', '--port', String(FRONTEND_PORT)], {
     cwd: FRONTEND_DIR,
+    silent: true,
     env: {
       ...process.env,
       NODE_ENV: 'production',
       PORT: String(FRONTEND_PORT),
       NEXT_PUBLIC_API_URL: `http://localhost:${BACKEND_PORT}/api`,
-      ELECTRON_RUN_AS_NODE: '1',
     },
-    stdio: 'pipe',
-    windowsHide: true,
   });
 
   proc.stdout?.on('data', d => console.log('[Frontend]', d.toString().trim()));
