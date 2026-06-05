@@ -35,20 +35,8 @@ extraResources:
 # Windows installer
 win:
   target:
-    - target: nsis
+    - target: portable
       arch:
         - x64
   icon: electron/assets/icon.ico
-
-# NSIS Installer options
-nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  allowElevation: true
-  installerIcon: electron/assets/icon.ico
-  uninstallerIcon: electron/assets/icon.ico
-  installerHeaderIcon: electron/assets/icon.ico
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
-  shortcutName: ATE Intelligence
 
