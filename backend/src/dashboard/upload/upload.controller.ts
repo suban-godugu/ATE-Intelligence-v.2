@@ -287,7 +287,7 @@ export class UploadController {
       }
 
       // Step 5: Circular Wafer Map & Cost Analytics Generation
-      const lotId = await this.createLotAndGridData();
+      const lotId = await this.createLotAndGridData(filesList);
 
       sendEvent([{
         stage: 'STIL',
@@ -414,9 +414,205 @@ export class UploadController {
    * Helper: Generates a completed Lot, Wafer, 612 circular dies,
    * defect clusters (Scratch & Local), cost figures, and LLM root cause analysis inside Postgres.
    */
-  private async createLotAndGridData(): Promise<string> {
+  private async createLotAndGridData(filesList: any[] = []): Promise<string> {
     const rand = Math.floor(100 + Math.random() * 900);
     const lotId = `LOT-2026-${rand}`;
+
+    const parsedDies: Array<{ x: number; y: number; bin: number; failType: string | null; testTimeMs: number; passed: boolean }> = [];
+    const parsedPatterns: string[] = [];
+
+    // ─── STIL File Parser ───
+    const stilFile = filesList.find(f => f.fieldname === 'STIL');
+    if (stilFile) {
+      const content = Buffer.from(stilFile.base64, 'base64').toString('utf8');
+      const patternRegex = /Pattern\s+["']?([a-zA-Z0-9_\-\.]+)/gi;
+      let match;
+      const seen = new Set<string>();
+      while ((match = patternRegex.exec(content)) !== null) {
+        const patName = match[1].trim();
+        if (patName && !seen.has(patName) && patName.toLowerCase() !== 'exec') {
+          seen.add(patName);
+          parsedPatterns.push(patName);
+        }
+      }
+      
+      const annRegex = /Pattern:\s*([a-zA-Z0-9_\-\.]+)/gi;
+      while ((match = annRegex.exec(content)) !== null) {
+        const patName = match[1].trim();
+        if (patName && !seen.has(patName)) {
+          seen.add(patName);
+          parsedPatterns.push(patName);
+        }
+      }
+    }
+    if (parsedPatterns.length === 0) {
+      parsedPatterns.push('PAT-SCAN-900', 'PAT-SCAN-901', 'PAT-SCAN-902');
+    }
+
+    // ─── ATE LOG File Parser ───
+    const ateLogFile = filesList.find(f => f.fieldname === 'ATE_LOG');
+    if (ateLogFile) {
+      const content = Buffer.from(ateLogFile.base64, 'base64').toString('utf8');
+      const lines = content.split(/\r?\n/);
+      
+      let headers: string[] = [];
+      let headerIndex = -1;
+      for (let i = 0; i < Math.min(lines.length, 50); i++) {
+        const line = lines[i].trim();
+        if (line.toLowerCase().includes('x') && line.toLowerCase().includes('y') && (line.toLowerCase().includes('bin') || line.toLowerCase().includes('result') || line.toLowerCase().includes('passed'))) {
+          headers = line.split(/[,\t;]/).map(h => h.trim().toLowerCase());
+          headerIndex = i;
+          break;
+        }
+      }
+
+      if (headerIndex !== -1 && headers.length > 0) {
+        const xIdx = headers.findIndex(h => h === 'x' || h.includes('coord_x') || h.includes('die_x') || h.includes('col') || h === 'coordinate_x');
+        const yIdx = headers.findIndex(h => h === 'y' || h.includes('coord_y') || h.includes('die_y') || h.includes('row') || h === 'coordinate_y');
+        const binIdx = headers.findIndex(h => h === 'bin' || h.includes('bin_num') || h.includes('softbin') || h.includes('hardbin') || h === 'result_bin');
+        const failTypeIdx = headers.findIndex(h => h.includes('fail') || h.includes('type') || h.includes('defect') || h === 'failure_mode');
+        const timeIdx = headers.findIndex(h => h.includes('time') || h.includes('ms') || h === 'test_time');
+        const passedIdx = headers.findIndex(h => h.includes('pass') || h.includes('result') || h === 'passed' || h === 'status');
+
+        if (xIdx !== -1 && yIdx !== -1) {
+          for (let i = headerIndex + 1; i < lines.length; i++) {
+            const line = lines[i].trim();
+            if (!line) continue;
+            const parts = line.split(/[,\t;]/);
+            if (parts.length <= Math.max(xIdx, yIdx)) continue;
+            
+            const x = parseInt(parts[xIdx], 10);
+            const y = parseInt(parts[yIdx], 10);
+            if (isNaN(x) || isNaN(y)) continue;
+
+            const bin = binIdx !== -1 ? parseInt(parts[binIdx], 10) || 1 : 1;
+            const failType = failTypeIdx !== -1 && parts[failTypeIdx] ? parts[failTypeIdx].trim() : null;
+            const testTimeMs = timeIdx !== -1 ? parseFloat(parts[timeIdx]) || (Math.random() * 40 + 10) : (Math.random() * 40 + 10);
+            
+            let passed = bin === 1;
+            if (passedIdx !== -1 && parts[passedIdx]) {
+              const pStr = parts[passedIdx].trim().toLowerCase();
+              passed = pStr === 'true' || pStr === 'pass' || pStr === '1' || pStr === 'y' || pStr === 'passed';
+            }
+
+            parsedDies.push({ x, y, bin, failType, testTimeMs, passed });
+          }
+        }
+      }
+
+      // Regex fallback if CSV didn't find any dies
+      if (parsedDies.length === 0) {
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const regexes = [
+            /die\s*\(?(\d+)\s*,\s*(\d+)\)?\s*bin\s*[:=]?\s*(\d+)/i,
+            /coord[s]?\s*[:=]?\s*\(?(\d+)\s*,\s*(\d+)\)?\s*bin\s*[:=]?\s*(\d+)/i,
+            /x\s*[:=]\s*(\d+)\s*y\s*[:=]\s*(\d+)\s*bin\s*[:=]\s*(\d+)/i,
+            /^(\d+)\s*[,\t; ]\s*(\d+)\s*[,\t; ]\s*(\d+)(?:\s*[,\t; ]\s*(.*))?$/
+          ];
+
+          for (const regex of regexes) {
+            const match = trimmed.match(regex);
+            if (match) {
+              const x = parseInt(match[1], 10);
+              const y = parseInt(match[2], 10);
+              const bin = parseInt(match[3], 10);
+              if (!isNaN(x) && !isNaN(y) && !isNaN(bin)) {
+                let failType: string | null = null;
+                if (bin !== 1) {
+                  failType = match[4]?.trim() || (bin === 5 ? 'Scratch' : 'Local');
+                }
+                const testTimeMs = Math.random() * 40 + 10;
+                const passed = bin === 1;
+                parsedDies.push({ x, y, bin, failType, testTimeMs, passed });
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // ─── ATPG Report Parser ───
+    let faultCoveragePct = 87.5;
+    let totalPatterns = 1200;
+    let faultsCovered = 1050;
+    let faultsDetected = 1100;
+
+    const atpgFile = filesList.find(f => f.fieldname === 'ATPG_REPORT');
+    if (atpgFile) {
+      const content = Buffer.from(atpgFile.base64, 'base64').toString('utf8');
+      
+      const covMatch = content.match(/(?:fault\s+)?coverage\s*[:=]\s*(\d+(?:\.\d+)?)\s*%/i);
+      if (covMatch) {
+        faultCoveragePct = parseFloat(covMatch[1]);
+      }
+      const patMatch = content.match(/(?:pattern\s+count|total\s+patterns)\s*[:=]\s*(\d+)/i);
+      if (patMatch) {
+        totalPatterns = parseInt(patMatch[1], 10);
+      }
+      const coveredMatch = content.match(/(?:faults\s+covered|covered\s+faults)\s*[:=]\s*(\d+)/i);
+      if (coveredMatch) {
+        faultsCovered = parseInt(coveredMatch[1], 10);
+      }
+      const detectedMatch = content.match(/(?:faults\s+detected|detected\s+faults)\s*[:=]\s*(\d+)/i);
+      if (detectedMatch) {
+        faultsDetected = parseInt(detectedMatch[1], 10);
+      }
+    }
+
+    // ─── MBIST Report Parser ───
+    let mbistCellId = 'MEM_A';
+    let mbistAlgo = 'MARCH C-';
+    let mbistPassCount = 1000;
+    let mbistFailCount = 0;
+
+    const mbistFile = filesList.find(f => f.fieldname === 'MBIST_REPORT');
+    if (mbistFile) {
+      const content = Buffer.from(mbistFile.base64, 'base64').toString('utf8');
+      
+      const cellMatch = content.match(/(?:memory\s+cell|cell\s+id|mem_id)\s*[:=]\s*([a-zA-Z0-9_\-]+)/i);
+      if (cellMatch) mbistCellId = cellMatch[1];
+
+      const algoMatch = content.match(/(?:algorithm|algo)\s*[:=]\s*([a-zA-Z0-9_\-\+]+)/i);
+      if (algoMatch) mbistAlgo = algoMatch[1];
+
+      const failMatch = content.match(/(?:fail\s+count|failures)\s*[:=]\s*(\d+)/i);
+      if (failMatch) mbistFailCount = parseInt(failMatch[1], 10);
+
+      const passMatch = content.match(/(?:pass\s+count|passes)\s*[:=]\s*(\d+)/i);
+      if (passMatch) mbistPassCount = parseInt(passMatch[1], 10);
+    }
+
+    // ─── LBIST Report Parser ───
+    let lbistBlockId = 'BLOCK_B';
+    let lbistCycles = 40000;
+    let lbistPassed = true;
+    let lbistExpectedSig = '0xABC123';
+    let lbistActualSig = '0xABC123';
+
+    const lbistFile = filesList.find(f => f.fieldname === 'LBIST_REPORT');
+    if (lbistFile) {
+      const content = Buffer.from(lbistFile.base64, 'base64').toString('utf8');
+      
+      const blockMatch = content.match(/(?:logic\s+block|block\s+id)\s*[:=]\s*([a-zA-Z0-9_\-]+)/i);
+      if (blockMatch) lbistBlockId = blockMatch[1];
+
+      const cycleMatch = content.match(/(?:clock\s+cycles|cycles)\s*[:=]\s*(\d+)/i);
+      if (cycleMatch) lbistCycles = parseInt(cycleMatch[1], 10);
+
+      const statusMatch = content.match(/(?:signature\s+passed|passed|status)\s*[:=]\s*(true|false|pass|fail)/i);
+      if (statusMatch) {
+        const val = statusMatch[1].toLowerCase();
+        lbistPassed = val === 'true' || val === 'pass';
+      }
+      const expSigMatch = content.match(/(?:expected\s+signature|expected\s+sig)\s*[:=]\s*(0x[a-fA-F0-9]+)/i);
+      if (expSigMatch) lbistExpectedSig = expSigMatch[1];
+
+      const actSigMatch = content.match(/(?:actual\s+signature|actual\s+sig)\s*[:=]\s*(0x[a-fA-F0-9]+)/i);
+      if (actSigMatch) lbistActualSig = actSigMatch[1];
+    }
 
     // 1. Resolve Fab
     let fab = await this.prisma.fab.findFirst();
@@ -451,47 +647,66 @@ export class UploadController {
       },
     });
 
-    // 5. Resolve Pattern
-    let pattern = await this.prisma.pattern.findFirst();
-    if (!pattern) {
-      pattern = await this.prisma.pattern.create({
-        data: {
-          patternId: 'PAT-SCAN-900',
-          patternType: 'SCAN',
-          killRatio: 0.82,
-        },
+    // 5. Create or Resolve all parsed patterns
+    const dbPatterns = [];
+    for (const patId of parsedPatterns) {
+      let pat = await this.prisma.pattern.findUnique({
+        where: { patternId: patId },
       });
+      if (!pat) {
+        pat = await this.prisma.pattern.create({
+          data: {
+            patternId: patId,
+            patternType: 'SCAN',
+            killRatio: 0.8 + Math.random() * 0.15,
+          },
+        });
+      }
+      dbPatterns.push(pat);
     }
+    const mainPattern = dbPatterns[0];
 
-    // 6. Generate circular grid dies (coordinates 1-30)
+    // 6. Generate wafer die coordinates
     const diesToCreate: any[] = [];
-    const center = 15.5;
-    const radius = 14.5;
+    if (parsedDies.length > 0) {
+      for (const die of parsedDies) {
+        diesToCreate.push({
+          waferId: wafer.id,
+          x: die.x,
+          y: die.y,
+          bin: die.bin,
+          failType: die.failType,
+        });
+      }
+    } else {
+      // Fallback circular grid dies (coordinates 1-30)
+      const center = 15.5;
+      const radius = 14.5;
+      for (let x = 1; x <= 30; x++) {
+        for (let y = 1; y <= 30; y++) {
+          if (Math.pow(x - center, 2) + Math.pow(y - center, 2) <= Math.pow(radius, 2)) {
+            let bin = 1;
+            let failType: string | null = null;
 
-    for (let x = 1; x <= 30; x++) {
-      for (let y = 1; y <= 30; y++) {
-        if (Math.pow(x - center, 2) + Math.pow(y - center, 2) <= Math.pow(radius, 2)) {
-          let bin = 1;
-          let failType: string | null = null;
+            // Scratch pattern along line: y = round(0.4 * x + 9)
+            if (y === Math.round(0.4 * x + 9) || y === Math.round(0.4 * x + 10)) {
+              bin = 5;
+              failType = 'Scratch';
+            }
+            // Local cluster centered around (10, 12)
+            else if (Math.pow(x - 10, 2) + Math.pow(y - 12, 2) <= Math.pow(2.2, 2)) {
+              bin = 8;
+              failType = 'Local';
+            }
 
-          // Scratch pattern along line: y = round(0.4 * x + 9)
-          if (y === Math.round(0.4 * x + 9) || y === Math.round(0.4 * x + 10)) {
-            bin = 5;
-            failType = 'Scratch';
+            diesToCreate.push({
+              waferId: wafer.id,
+              x,
+              y,
+              bin,
+              failType,
+            });
           }
-          // Local cluster centered around (10, 12)
-          else if (Math.pow(x - 10, 2) + Math.pow(y - 12, 2) <= Math.pow(2.2, 2)) {
-            bin = 8;
-            failType = 'Local';
-          }
-
-          diesToCreate.push({
-            waferId: wafer.id,
-            x,
-            y,
-            bin,
-            failType,
-          });
         }
       }
     }
@@ -504,14 +719,23 @@ export class UploadController {
       where: { waferId: wafer.id },
     });
 
+    // Create a map of x,y coordinates to test details for fast lookup
+    const dieDetailMap = new Map<string, { testTimeMs: number; passed: boolean }>();
+    for (const d of parsedDies) {
+      dieDetailMap.set(`${d.x},${d.y}`, { testTimeMs: d.testTimeMs, passed: d.passed });
+    }
+
     // Bulk insert TestResults
-    const testResults = createdDies.map(die => ({
-      dieId: die.id,
-      patternId: pattern.id,
-      testTimeMs: Math.random() * 40 + 10,
-      passed: die.bin === 1,
-      costUsd: die.bin === 1 ? 0.015 : 0.12,
-    }));
+    const testResults = createdDies.map(die => {
+      const detail = dieDetailMap.get(`${die.x},${die.y}`);
+      return {
+        dieId: die.id,
+        patternId: mainPattern.id,
+        testTimeMs: detail ? detail.testTimeMs : (Math.random() * 40 + 10),
+        passed: detail ? detail.passed : (die.bin === 1),
+        costUsd: die.bin === 1 ? 0.015 : 0.12,
+      };
+    });
 
     await this.prisma.testResult.createMany({ data: testResults });
 
@@ -519,17 +743,17 @@ export class UploadController {
     const analysis = await this.prisma.patternAnalysis.create({
       data: {
         lotId: lot.id,
-        patternId: pattern.id,
+        patternId: mainPattern.id,
         domain: 'SCAN_CHAIN',
         faultClass: 'STUCK_AT',
-        totalPatterns: 1200,
-        faultsCovered: 1050,
-        faultsDetected: 1100,
-        faultsUntested: 100,
-        coveragePct: 87.5,
+        totalPatterns: totalPatterns,
+        faultsCovered: faultsCovered,
+        faultsDetected: faultsDetected,
+        faultsUntested: Math.max(0, totalPatterns - faultsCovered),
+        coveragePct: faultCoveragePct,
         executionTimeMs: 380.2,
-        passCount: 1150,
-        failCount: 50,
+        passCount: Math.round(totalPatterns * (faultCoveragePct / 100)),
+        failCount: Math.round(totalPatterns * (1 - faultCoveragePct / 100)),
         status: 'COMPLETE',
       },
     });
@@ -551,27 +775,27 @@ export class UploadController {
     await this.prisma.mbistResult.create({
       data: {
         lotId: lot.id,
-        memoryCellId: 'MEM_A',
-        algorithm: 'MARCH C-',
+        memoryCellId: mbistCellId,
+        algorithm: mbistAlgo,
         wordLines: 1024,
         bitLines: 512,
         retentionTimeMs: 120,
-        passCount: 1000,
-        failCount: 0,
-        coveragePct: 100,
+        passCount: mbistPassCount,
+        failCount: mbistFailCount,
+        coveragePct: mbistPassCount + mbistFailCount > 0 ? (mbistPassCount / (mbistPassCount + mbistFailCount)) * 100 : 100,
       },
     });
 
     await this.prisma.lbistResult.create({
       data: {
         lotId: lot.id,
-        logicBlockId: 'BLOCK_B',
+        logicBlockId: lbistBlockId,
         seedValue: '0xCAFE',
-        clockCycles: 40000,
-        signaturePassed: false,
-        expectedSignature: '0xABC123',
-        actualSignature: '0xABC124',
-        coveragePct: 84.6,
+        clockCycles: lbistCycles,
+        signaturePassed: lbistPassed,
+        expectedSignature: lbistExpectedSig,
+        actualSignature: lbistActualSig,
+        coveragePct: lbistPassed ? 98.4 : 84.6,
       },
     });
 
@@ -583,15 +807,19 @@ export class UploadController {
 Analysis of Lot **${lotId}** indicates a **systematic reticle-induced lithographic excursion** resulting in a yield loss pattern. MBIST and LBIST diagnostics confirm functional integrity across memory blocks, while ATPG scan-chain fail diagnostics isolate stuck-at and bridge faults along a linear coordinate plane.
 
 #### 📊 Ingested DFT telemetry correlation:
-* **STIL File**: Correctly validated and ingested standard ATPG test pattern vectors.
-* **ATPG Report**: Verified **87.5% fault coverage**. Identified high fault density in localized functional cells.
-* **MBIST Diagnostics**: MARCH C- algorithm completed with **100% coverage**, indicating memory matrices are healthy and fully repairable.
-* **LBIST Diagnostics**: Mismatch detected at Logic Block B (expected \`0xABC123\`, actual \`0xABC124\`), indicating structural gate degradation.
-* **ATE Logs**: Correlated with spatial fail zones on Wafer 01.
+* **STIL File**: Correctly validated and ingested standard ATPG test pattern vectors (${parsedPatterns.length} patterns detected).
+* **ATPG Report**: Verified **${faultCoveragePct.toFixed(1)}% fault coverage**. Identified high fault density in localized functional cells.
+* **MBIST Diagnostics**: ${mbistAlgo} algorithm completed with **${mbistFailCount === 0 ? '100% coverage, indicating healthy memories' : mbistFailCount + ' failures detected'}**.
+* **LBIST Diagnostics**: ${lbistPassed ? 'Passed signature validation.' : `Mismatch detected at ${lbistBlockId} (expected \`${lbistExpectedSig}\`, actual \`${lbistActualSig}\`).`}
+* **ATE Logs**: Correlated with spatial fail zones on Wafer 01 (${parsedDies.length > 0 ? parsedDies.length + ' dies parsed from ATE log' : 'circular grid generated'}).
 
 #### 📍 defect Spatial Pattern Isolation:
-1. **Scratch Excursion (bin 5)**: A linear defect scratch was isolated across the coordinate plane mapping to reticle translation boundaries. Likely caused by a mechanical handler brush contact.
-2. **Local Cluster (bin 8)**: A cluster defect was isolated centered at coordinates \`(10, 12)\`, indicating a particle contamination on the scanner lens.
+${
+  parsedDies.length > 0
+    ? `- Spatial fails matching the uploaded ATE log were mapped. Fails count: ${parsedDies.filter(d => !d.passed).length} dies.`
+    : `1. **Scratch Excursion (bin 5)**: A linear defect scratch was isolated across the coordinate plane mapping to reticle translation boundaries. Likely caused by mechanical handler brush contact.
+2. **Local Cluster (bin 8)**: A cluster defect was isolated centered at coordinates \`(10, 12)\`, indicating a particle contamination on the scanner lens.`
+}
 
 #### 💡 Yield Action Recommendations:
 * **Immediate**: Inspect and clean the silicon wafer handler assembly to resolve the handler brush scratch.
@@ -606,7 +834,11 @@ Analysis of Lot **${lotId}** indicates a **systematic reticle-induced lithograph
         prediction: 'CRITICAL_YIELD_LOSS',
         riskScore: 0.85,
         recommendation: copilotReport,
-        featuresJson: JSON.stringify({ circularDiesCount: 612, scratchDies: 42, localDies: 15 }),
+        featuresJson: JSON.stringify({
+          circularDiesCount: createdDies.length,
+          scratchDies: parsedDies.length > 0 ? parsedDies.filter(d => d.bin === 5).length : 42,
+          localDies: parsedDies.length > 0 ? parsedDies.filter(d => d.bin === 8).length : 15,
+        }),
       },
     });
 
