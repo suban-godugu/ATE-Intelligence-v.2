@@ -41,10 +41,22 @@ module.exports = {
   ],
 
   win: {
-    target: [{ target: 'portable', arch: ['x64'] }],
+    target: [
+      { target: 'nsis', arch: ['x64'] },
+      { target: 'portable', arch: ['x64'] },
+    ],
     icon: 'electron/assets/icon.ico',
     // Disable code signing completely — no certificate required
     signAndEditExecutable: false,
     signExts: [],
+  },
+
+  nsis: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: "ATE Intelligence",
+    allowElevation: true,
   },
 };
