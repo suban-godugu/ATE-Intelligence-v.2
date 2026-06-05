@@ -20,6 +20,31 @@ const REDIS_PORT = 6379;
 let mainWindow = null;
 const children = [];
 
+// ── Load External `.env` File (Allows configuring DB/Storage on other PCs) ──
+const externalEnvPath = isDev
+  ? path.join(ROOT, '.env')
+  : path.join(path.dirname(process.resourcesPath), '.env');
+
+if (fs.existsSync(externalEnvPath)) {
+  console.log(`[Config] Loading external environment variables from: ${externalEnvPath}`);
+  try {
+    const envContent = fs.readFileSync(externalEnvPath, 'utf8');
+    envContent.split(/\r?\n/).forEach(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const firstEquals = trimmed.indexOf('=');
+      if (firstEquals === -1) return;
+      const key = trimmed.slice(0, firstEquals).trim();
+      const value = trimmed.slice(firstEquals + 1).trim();
+      // Remove wrapping quotes if present
+      const cleanValue = value.replace(/^['"]|['"]$/g, '');
+      process.env[key] = cleanValue;
+    });
+  } catch (err) {
+    console.error('[Config] Failed to read external .env:', err);
+  }
+}
+
 // ── Utility: wait for a TCP port to be open ────────────────────────────────
 function waitForPort(port, host = '127.0.0.1', timeout = 60000) {
   return new Promise((resolve, reject) => {
