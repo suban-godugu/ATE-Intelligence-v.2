@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { PrismaService } from '../database/prisma.service';
+import { RedisService } from '../redis/redis.service';
 
 // ── Keyword detection rules ───────────────────
 const KEYWORD_RULES: Record<string, string[]> = {
@@ -22,7 +23,10 @@ const EXT_MAP: Record<string, string> = {
 export class AteDftService {
   private readonly logger = new Logger(AteDftService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   // ── Main entry point ────────────────────────
   async processFile(file: Express.Multer.File) {
@@ -33,16 +37,26 @@ export class AteDftService {
     catch { content = ''; }
 
     const { type, confidence } = this.detectFileType(file.originalname, content, ext);
+    const isDbOnline = this.prisma.isOnline();
 
     // Persist upload record
-    await this.prisma.ateDftFile.create({
-      data: {
-        fileId, fileName: file.originalname,
-        filePath: file.path, detectedType: type,
-        confidence, status: 'detected',
-        uploadTime: new Date(),
-      },
-    });
+    if (isDbOnline) {
+      try {
+        await this.prisma.ateDftFile.create({
+          data: {
+            fileId, fileName: file.originalname,
+            filePath: file.path, detectedType: type,
+            confidence, status: 'detected',
+            uploadTime: new Date(),
+          },
+        });
+      } catch (err: any) {
+        this.logger.warn(`Failed writing upload to Postgres: ${err.message}. Swapping to Redis fallback.`);
+        await this.saveUploadToRedis(fileId, file.originalname, file.path, type, confidence, 'detected');
+      }
+    } else {
+      await this.saveUploadToRedis(fileId, file.originalname, file.path, type, confidence, 'detected');
+    }
 
     if (type === 'UNKNOWN') {
       return { fileId, fileName: file.originalname,
@@ -54,15 +68,47 @@ export class AteDftService {
 
     // Save result to typed table
     await this.saveResult(type, fileId, features, prediction);
-    await this.prisma.ateDftFile.update({
-      where: { fileId }, data: { status: 'predicted' },
-    });
+    
+    if (isDbOnline) {
+      try {
+        await this.prisma.ateDftFile.update({
+          where: { fileId }, data: { status: 'predicted' },
+        });
+      } catch {
+        await this.updateUploadStatusInRedis(fileId, 'predicted');
+      }
+    } else {
+      await this.updateUploadStatusInRedis(fileId, 'predicted');
+    }
 
     return {
       fileId, fileName: file.originalname,
       detectedType: type, confidence: Math.round(confidence * 100) / 100,
       features, prediction,
     };
+  }
+
+  private async saveUploadToRedis(fileId: string, originalName: string, filePath: string, type: string, confidence: number, status: string) {
+    const data = {
+      fileId,
+      fileName: originalName,
+      filePath,
+      detectedType: type,
+      confidence,
+      status,
+      uploadTime: new Date().toISOString(),
+    };
+    await this.redis.set(`fallback:ateDftFile:${fileId}`, JSON.stringify(data));
+    await this.redis.lpush('fallback:ateDftFiles_list', fileId);
+  }
+
+  private async updateUploadStatusInRedis(fileId: string, status: string) {
+    const raw = await this.redis.get(`fallback:ateDftFile:${fileId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      parsed.status = status;
+      await this.redis.set(`fallback:ateDftFile:${fileId}`, JSON.stringify(parsed));
+    }
   }
 
   // ── File type detection ──────────────────────
@@ -239,41 +285,116 @@ export class AteDftService {
   // ── DB save ──────────────────────────────────
   private async saveResult(type: string, fileId: string,
     features: Record<string, unknown>, prediction: Record<string, unknown>) {
-    await this.prisma.ateDftPrediction.create({
-      data: {
-        fileId, module: type,
-        prediction:     String(prediction.prediction ?? ''),
-        riskScore:      Number(prediction.riskScore ?? 0),
-        recommendation: String(prediction.recommendation ?? ''),
-        featuresJson:   JSON.stringify(features),
-      },
-    });
+    const isDbOnline = this.prisma.isOnline();
+    if (isDbOnline) {
+      try {
+        await this.prisma.ateDftPrediction.create({
+          data: {
+            fileId, module: type,
+            prediction:     String(prediction.prediction ?? ''),
+            riskScore:      Number(prediction.riskScore ?? 0),
+            recommendation: String(prediction.recommendation ?? ''),
+            featuresJson:   JSON.stringify(features),
+          },
+        });
+        return;
+      } catch (err: any) {
+        this.logger.warn(`Failed writing prediction to Postgres: ${err.message}. Swapping to Redis fallback.`);
+      }
+    }
+    
+    // Save to Redis
+    const data = {
+      id: Math.floor(Math.random() * 100000),
+      fileId,
+      module: type,
+      prediction: String(prediction.prediction ?? ''),
+      riskScore: Number(prediction.riskScore ?? 0),
+      recommendation: String(prediction.recommendation ?? ''),
+      featuresJson: JSON.stringify(features),
+      createdAt: new Date().toISOString(),
+    };
+    await this.redis.set(`fallback:ateDftPrediction:${fileId}`, JSON.stringify(data));
+    await this.redis.lpush(`fallback:ateDftPredictions_list:${type.toUpperCase()}`, fileId);
   }
 
   // ── API getters ──────────────────────────────
   async getAllFiles() {
-    const rows = await this.prisma.ateDftFile.findMany({
-      orderBy: { uploadTime: 'desc' }, take: 100,
-    });
-    return rows.map(r => ({
-      fileId:       r.fileId,
-      fileName:     r.fileName,
-      detectedType: r.detectedType,
-      confidence:   r.confidence,
-      status:       r.status,
-      uploadTime:   r.uploadTime.toISOString(),
-    }));
+    let rows: any[] = [];
+    if (this.prisma.isOnline()) {
+      try {
+        rows = await this.prisma.ateDftFile.findMany({
+          orderBy: { uploadTime: 'desc' }, take: 100,
+        });
+      } catch (err) {
+        rows = [];
+      }
+    }
+
+    try {
+      const redisIds = await this.redis.lrange('fallback:ateDftFiles_list', 0, 99);
+      const redisRows: any[] = [];
+      for (const fileId of redisIds) {
+        const raw = await this.redis.get(`fallback:ateDftFile:${fileId}`);
+        if (raw) {
+          redisRows.push(JSON.parse(raw));
+        }
+      }
+      const mappedDbRows = rows.map(r => ({
+        fileId:       r.fileId,
+        fileName:     r.fileName,
+        detectedType: r.detectedType,
+        confidence:   r.confidence,
+        status:       r.status,
+        uploadTime:   r.uploadTime instanceof Date ? r.uploadTime.toISOString() : r.uploadTime,
+      }));
+      const merged = [...redisRows, ...mappedDbRows];
+      return merged.slice(0, 100);
+    } catch {
+      return rows.map(r => ({
+        fileId:       r.fileId,
+        fileName:     r.fileName,
+        detectedType: r.detectedType,
+        confidence:   r.confidence,
+        status:       r.status,
+        uploadTime:   r.uploadTime instanceof Date ? r.uploadTime.toISOString() : r.uploadTime,
+      }));
+    }
   }
 
   async getDashboardSummary() {
-    const [total, mbist, lbist, scan, wafer, atpg] = await Promise.all([
-      this.prisma.ateDftFile.count(),
-      this.prisma.ateDftPrediction.count({ where: { module: 'MBIST' } }),
-      this.prisma.ateDftPrediction.count({ where: { module: 'LBIST' } }),
-      this.prisma.ateDftPrediction.count({ where: { module: 'SCAN'  } }),
-      this.prisma.ateDftPrediction.count({ where: { module: 'WAFER' } }),
-      this.prisma.ateDftPrediction.count({ where: { module: 'ATPG'  } }),
-    ]);
+    let total = 0, mbist = 0, lbist = 0, scan = 0, wafer = 0, atpg = 0;
+    if (this.prisma.isOnline()) {
+      try {
+        [total, mbist, lbist, scan, wafer, atpg] = await Promise.all([
+          this.prisma.ateDftFile.count(),
+          this.prisma.ateDftPrediction.count({ where: { module: 'MBIST' } }),
+          this.prisma.ateDftPrediction.count({ where: { module: 'LBIST' } }),
+          this.prisma.ateDftPrediction.count({ where: { module: 'SCAN'  } }),
+          this.prisma.ateDftPrediction.count({ where: { module: 'WAFER' } }),
+          this.prisma.ateDftPrediction.count({ where: { module: 'ATPG'  } }),
+        ]);
+      } catch {}
+    }
+
+    try {
+      const client = this.redis.getClient();
+      const [rTotal, rMbist, rLbist, rScan, rWafer, rAtpg] = await Promise.all([
+        client.llen('fallback:ateDftFiles_list'),
+        client.llen('fallback:ateDftPredictions_list:MBIST'),
+        client.llen('fallback:ateDftPredictions_list:LBIST'),
+        client.llen('fallback:ateDftPredictions_list:SCAN'),
+        client.llen('fallback:ateDftPredictions_list:WAFER'),
+        client.llen('fallback:ateDftPredictions_list:ATPG'),
+      ]);
+      total += rTotal || 0;
+      mbist += rMbist || 0;
+      lbist += rLbist || 0;
+      scan += rScan || 0;
+      wafer += rWafer || 0;
+      atpg += rAtpg || 0;
+    } catch {}
+
     return {
       totalFilesUploaded: total,
       mbist: { totalRecords: mbist },
@@ -285,19 +406,48 @@ export class AteDftService {
   }
 
   async getModuleResults(module: string) {
-    const rows = await this.prisma.ateDftPrediction.findMany({
-      where:   { module: module.toUpperCase() },
-      orderBy: { createdAt: 'desc' },
-      take:    100,
-    });
-    return rows.map(r => ({
-      id:             r.id,
-      module:         r.module,
-      prediction:     r.prediction,
-      riskScore:      r.riskScore,
-      recommendation: r.recommendation,
-      features:       JSON.parse(r.featuresJson ?? '{}'),
-      createdAt:      r.createdAt.toISOString(),
-    }));
+    const modUpper = module.toUpperCase();
+    let rows: any[] = [];
+    if (this.prisma.isOnline()) {
+      try {
+        rows = await this.prisma.ateDftPrediction.findMany({
+          where:   { module: modUpper },
+          orderBy: { createdAt: 'desc' },
+          take:    100,
+        });
+      } catch {}
+    }
+
+    try {
+      const redisPredictIds = await this.redis.lrange(`fallback:ateDftPredictions_list:${modUpper}`, 0, 99);
+      const redisRows: any[] = [];
+      for (const fileId of redisPredictIds) {
+        const raw = await this.redis.get(`fallback:ateDftPrediction:${fileId}`);
+        if (raw) {
+          redisRows.push(JSON.parse(raw));
+        }
+      }
+      const mappedDbRows = rows.map(r => ({
+        id:             r.id,
+        module:         r.module,
+        prediction:     r.prediction,
+        riskScore:      r.riskScore,
+        recommendation: r.recommendation,
+        features:       JSON.parse(r.featuresJson ?? '{}'),
+        createdAt:      r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+      }));
+      const merged = [...redisRows, ...mappedDbRows];
+      return merged.slice(0, 100);
+    } catch {
+      return rows.map(r => ({
+        id:             r.id,
+        module:         r.module,
+        prediction:     r.prediction,
+        riskScore:      r.riskScore,
+        recommendation: r.recommendation,
+        features:       JSON.parse(r.featuresJson ?? '{}'),
+        createdAt:      r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+      }));
+    }
   }
 }

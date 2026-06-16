@@ -6,7 +6,8 @@ import {
   AlertTriangle,
   ArrowRight,
   TrendingUp,
-  Check
+  Check,
+  Target
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { GlassCard } from './SharedComponents';
@@ -103,7 +104,39 @@ export default function CoverageTab() {
   }, []);
 
   return (
-    <div className="space-y-6 fade-in-up">
+    <div className="space-y-4 fade-in-up">
+      {/* ── Actionable Coverage Gap Panel ── */}
+      <GlassCard
+        borderColor="rgba(16, 185, 129, 0.35)"
+        glowColor="rgba(16, 185, 129, 0.1)"
+        padding="20px"
+        className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center select-none"
+      >
+        <div className="md:col-span-2 space-y-1">
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+            <Target className="h-4 w-4 text-emerald-400 shrink-0" />
+            <span>Actionable Coverage Gap Analysis</span>
+          </h3>
+          <p className="text-[10px] text-slate-500 font-medium">
+            ATPG fault qualification sign-off criteria target vs active telemetry gap.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-4 md:col-span-2 text-center">
+          <div className="bg-slate-950/40 border border-slate-850 p-2 rounded-lg">
+            <span className="text-[9px] font-bold text-slate-500 uppercase block">Target</span>
+            <span className="text-sm font-mono font-bold text-white mt-1 block">95.0%</span>
+          </div>
+          <div className="bg-slate-950/40 border border-slate-850 p-2 rounded-lg border-emerald-500/10">
+            <span className="text-[9px] font-bold text-slate-500 uppercase block">Current</span>
+            <span className="text-sm font-mono font-bold text-emerald-450 mt-1 block">91.4%</span>
+          </div>
+          <div className="bg-red-500/5 border border-red-500/25 p-2 rounded-lg animate-pulse">
+            <span className="text-[9px] font-bold text-red-400 uppercase block">Gap</span>
+            <span className="text-sm font-mono font-bold text-red-400 mt-1 block">3.6%</span>
+          </div>
+        </div>
+      </GlassCard>
+
       {/* ── Main Two-Column Grid ──────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
         

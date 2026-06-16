@@ -10,6 +10,10 @@ import { LotSelector }         from '@/components/dashboard/LotSelector';
 import { useDashboardSummary } from '@/hooks/useDashboardSummary';
 import { useDashboard }        from '@/context/DashboardContext';
 
+
+
+
+
 /** Styled section divider with label */
 function SectionDivider({ label, sublabel }: { label: string; sublabel?: string }) {
   return (
@@ -139,24 +143,25 @@ export default function ExecutiveDashboardPage() {
         </div>
       </section>
 
-      {/* ── Row 1: Wafer Heatmap | Pattern Cost Table ─────────────── */}
-      <section aria-label="Wafer analysis and pattern cost">
-        <SectionDivider label="Spatial Analysis" sublabel="Wafer yield mapping & pattern cost breakdown" />
-        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div id="wafer-maps" className="scroll-mt-24 flex">
-            <div className="flex-1">
-              <WaferHeatmap />
-            </div>
-          </div>
-          <div id="pattern-cost-table" className="scroll-mt-24 flex">
-            <div className="flex-1">
-              <PatternCostTable />
-            </div>
+      {/* ── Row 1: Wafer Heatmap ─────────────────────────────────── */}
+      <section aria-label="Spatial wafer analysis" id="wafer-maps" className="scroll-mt-24">
+        <SectionDivider label="Spatial Yield & Cost" sublabel="Wafer heatmap spatial analysis and defect mapping" />
+        <div className="mt-3">
+          <WaferHeatmap />
+        </div>
+      </section>
+
+      {/* ── Row 2: Pattern Analysis Table ────────────────────────── */}
+      <section aria-label="Pattern analysis and diagnostics" id="pattern-analysis-table">
+        <SectionDivider label="Pattern Cost Breakdown" sublabel="ATPG/BIST test patterns coverage and execution cost" />
+        <div className="mt-3 flex">
+          <div className="flex-1">
+            <PatternCostTable />
           </div>
         </div>
       </section>
 
-      {/* ── Row 2: Cost Trend | AI Optimizer | Results ────────────── */}
+      {/* ── Row 3: Co-Optimization Engine & Trends ───────────────── */}
       <section aria-label="Cost trends and AI optimization" id="optimizer" className="scroll-mt-24">
         <SectionDivider label="AI Co-Optimization Engine" sublabel="Constraint-based pruning & cost trend analysis" />
         <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -177,6 +182,7 @@ export default function ExecutiveDashboardPage() {
           </div>
         </div>
       </section>
+
 
       {/* ── Footer ───────────────────────────────────────────────── */}
       <footer className="pt-4 border-t border-[var(--border)] flex items-center justify-between flex-wrap gap-3">

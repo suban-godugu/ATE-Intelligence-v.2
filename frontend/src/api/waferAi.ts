@@ -1,6 +1,5 @@
 'use client';
 
-import { apiUrl } from './config';
 
 // ─── Types ────────────────────────────────────────────────
 export interface WaferAiImage {
@@ -82,111 +81,66 @@ export const DEFECT_COLORS: Record<string, string> = {
   Normal:     '#10b981',
 };
 
-// ─── AI PREDICT (calls backend proxy → FastAPI) ───────────
+// ─── AI PREDICT — routes through Next.js proxy → FastAPI ─────────────────
+// All calls go to /api/wafer-ai/* (Next.js route handlers) which handle
+// the NestJS ↔ FastAPI chain. No direct cross-origin requests from the browser.
 export async function predictWaferImage(file: File): Promise<WaferPredictResult> {
   const form = new FormData();
   form.append('file', file);
 
-  try {
-    // Try NestJS backend proxy first
-    const res = await fetch(apiUrl('/wafer-ai/predict'), {
-      method: 'POST',
-      body: form,
-    });
+  const res = await fetch('/api/wafer-ai/predict', {
+    method: 'POST',
+    body: form,
+  });
 
-    if (res.ok) {
-      const json = await res.json();
-      const patternClass = json.patternLabel || json.class || 'Normal';
-      const lot = LOT_MAPPING[patternClass] ?? 'LOT_UNKNOWN';
-
-      const rawUrl = json.images?.find((i: any) => i.type === 'RAW_BIN_MAP')?.url;
-      const overlayUrl = json.images?.find((i: any) => i.type === 'DEFECT_MASK')?.url;
-      const densityUrl = json.images?.find((i: any) => i.type === 'PROCESSED_THUMBNAIL')?.url;
-      const attentionUrl = json.images?.find((i: any) => i.type === 'GRADCAM_OVERLAY')?.url;
-
-      return {
-        ...json,
-        class: patternClass,
-        lot,
-        good:  json.good  ?? 0,
-        fail:  json.fail  ?? 0,
-        total: json.total ?? 0,
-        yield: json.yield ?? 0,
-        probabilities: json.probabilities ?? {},
-        waferImageUrl: rawUrl,
-        overlayDataUrl: overlayUrl,
-        densityDataUrl: densityUrl,
-        attentionDataUrl: attentionUrl,
-      };
+  if (!res.ok) {
+    let errMsg = `Prediction failed (HTTP ${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) errMsg = body.error;
+    } catch {
+      // ignore JSON parse failure
     }
-  } catch (err) {
-    console.error('API proxy predict error:', err);
+    throw new Error(errMsg);
   }
 
-  // Direct FastAPI fallback (returns old shape, so we adapt it statefully)
-  try {
-    const res = await fetch('http://localhost:8000/predict', {
-      method: 'POST',
-      body: form,
-    });
-    if (res.ok) {
-      const json = await res.json();
-      const patternClass = json.patternLabel || json.class || 'Normal';
-      const lot = LOT_MAPPING[patternClass] ?? 'LOT_UNKNOWN';
+  const json = await res.json();
+  const patternClass: string = json.patternLabel || json.class || 'Normal';
+  const lot = LOT_MAPPING[patternClass] ?? 'LOT_UNKNOWN';
 
-      // Simulate URLs or adapt base64 for direct fallback
-      const rawUrl = json.rawImageBase64 ? `data:image/png;base64,${json.rawImageBase64}` : undefined;
-      const overlayUrl = json.maskBase64 ? `data:image/png;base64,${json.maskBase64}` : undefined;
-      const attentionUrl = json.gradcamBase64 ? `data:image/png;base64,${json.gradcamBase64}` : undefined;
-
-      const imagesList = [
-        { type: 'RAW_BIN_MAP', url: rawUrl || '', backend: 'POSTGRES' },
-        { type: 'DEFECT_MASK', url: overlayUrl || '', backend: 'POSTGRES' },
-        { type: 'GRADCAM_OVERLAY', url: attentionUrl || '', backend: 'POSTGRES' },
-      ].filter(img => img.url) as any[];
-
-      return {
-        ...json,
-        class: patternClass,
-        lot,
-        good:  json.good  ?? 0,
-        fail:  json.fail  ?? 0,
-        total: json.total ?? 0,
-        yield: json.yield ?? 0,
-        probabilities: json.probabilities ?? {},
-        images: imagesList,
-        waferImageUrl: rawUrl,
-        overlayDataUrl: overlayUrl,
-        attentionDataUrl: attentionUrl,
-      };
-    }
-  } catch {
-    throw new Error(
-      "WaferVision AI FastAPI server is offline. Please make sure the Python server is running on http://127.0.0.1:8000."
-    );
-  }
-
-  throw new Error(
-    "WaferVision AI API proxy failed. Please make sure the NestJS backend and the Python FastAPI server on http://127.0.0.1:8000 are online."
-  );
+  return {
+    ...json,
+    class: patternClass,
+    lot,
+    good:  json.good  ?? 0,
+    fail:  json.fail  ?? 0,
+    total: json.total ?? 0,
+    yield: json.yield ?? 0,
+    probabilities: json.probabilities ?? {},
+    waferImageUrl:   json.waferImageUrl,
+    overlayDataUrl:  json.overlayDataUrl,
+    densityDataUrl:  json.densityDataUrl,
+    attentionDataUrl: json.attentionDataUrl,
+  };
 }
 
+// ─── Lot database helpers — use Next.js proxy routes ─────────────────────
 export async function fetchLotsFromDb(): Promise<LotDatabase> {
   try {
-    const res = await fetch(apiUrl('/wafer-ai/lots'), { cache: 'no-store' });
+    const res = await fetch('/api/wafer-ai/lots', { cache: 'no-store' });
     if (!res.ok) {
       console.warn(`[WaferAI] /wafer-ai/lots returned ${res.status} — using empty lot database`);
       return { ...DEFAULT_LOT_DB };
     }
     return res.json();
   } catch (err) {
-    console.warn('[WaferAI] Could not reach backend — using empty lot database', err);
+    console.warn('[WaferAI] Could not reach lots endpoint — using empty lot database', err);
     return { ...DEFAULT_LOT_DB };
   }
 }
 
 export async function deleteWaferInDb(lotId: string, waferName: string): Promise<void> {
-  const res = await fetch(apiUrl(`/wafer-ai/lots/${lotId}/wafers/${encodeURIComponent(waferName)}`), {
+  const res = await fetch(`/api/wafer-ai/lots/${lotId}/wafers/${encodeURIComponent(waferName)}`, {
     method: 'DELETE',
     cache: 'no-store',
   });
@@ -196,7 +150,7 @@ export async function deleteWaferInDb(lotId: string, waferName: string): Promise
 }
 
 export async function clearLotInDb(lotId: string): Promise<void> {
-  const res = await fetch(apiUrl(`/wafer-ai/lots/${lotId}`), {
+  const res = await fetch(`/api/wafer-ai/lots/${lotId}`, {
     method: 'DELETE',
     cache: 'no-store',
   });
@@ -206,7 +160,7 @@ export async function clearLotInDb(lotId: string): Promise<void> {
 }
 
 export async function clearAllInDb(): Promise<void> {
-  const res = await fetch(apiUrl('/wafer-ai/lots'), {
+  const res = await fetch('/api/wafer-ai/lots', {
     method: 'DELETE',
     cache: 'no-store',
   });

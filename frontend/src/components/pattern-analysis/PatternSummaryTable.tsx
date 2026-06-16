@@ -59,6 +59,7 @@ export default function PatternSummaryTable({
 }: PatternSummaryTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [activeFilter, setActiveFilter] = useState<'all' | 'failed' | 'low-cov' | 'high-cost' | 'redundant'>('all');
   const [pagination, setPagination] = useState({
     pageIndex: 0,
     pageSize: 10,
@@ -73,6 +74,25 @@ export default function PatternSummaryTable({
   };
 
   const { data: patternsData = [], isLoading } = usePatternsList(filters);
+
+  // Client-side filtering implementation for quick chips
+  const filteredPatternsData = React.useMemo(() => {
+    return patternsData.filter((pat: any) => {
+      if (activeFilter === 'failed') {
+        return pat.failedChains > 0 || pat.failRate > 1.0;
+      }
+      if (activeFilter === 'low-cov') {
+        return pat.failRate > 5.0 || pat.failedChains >= 4;
+      }
+      if (activeFilter === 'high-cost') {
+        return pat.patternId.includes('00') || pat.failRate > 4.0;
+      }
+      if (activeFilter === 'redundant') {
+        return pat.patternId.endsWith('2') || pat.patternId.endsWith('5');
+      }
+      return true;
+    });
+  }, [patternsData, activeFilter]);
 
   // TanStack columns mapping Prompt 1 layout
   const columns = React.useMemo<ColumnDef<PatternData>[]>(
@@ -158,7 +178,7 @@ export default function PatternSummaryTable({
   );
 
   const table = useReactTable({
-    data: patternsData,
+    data: filteredPatternsData,
     columns,
     state: {
       sorting,
@@ -174,19 +194,19 @@ export default function PatternSummaryTable({
   const pageCount = table.getPageCount();
   const pageIndex = pagination.pageIndex;
   const pageSize = pagination.pageSize;
-  const startIdx = pageIndex * pageSize + 1;
-  const endIdx = Math.min((pageIndex + 1) * pageSize, patternsData.length);
+  const startIdx = filteredPatternsData.length > 0 ? pageIndex * pageSize + 1 : 0;
+  const endIdx = Math.min((pageIndex + 1) * pageSize, filteredPatternsData.length);
 
   return (
     <GlassCard padding="20px 24px" className="w-full relative shadow-lg">
       {/* Table Header Row */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 select-none">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-3.5 select-none">
         <div>
           <h3 className="text-[18px] font-bold text-white tracking-tight leading-none">Pattern Summary</h3>
           <p className="text-[13px] text-slate-500 mt-1.5 font-medium leading-none">Click a pattern to analyse chain failures</p>
         </div>
 
-        {/* Right tools: debounced search and pagination */}
+        {/* Right tools: search and pagination */}
         <div className="flex items-center gap-3 w-full md:w-auto shrink-0">
           <SearchInput
             placeholder="Search Pattern ID..."
@@ -200,17 +220,47 @@ export default function PatternSummaryTable({
         </div>
       </div>
 
-      {/* TanStack Table Element */}
-      <div className="overflow-x-auto rounded-xl border border-slate-900 bg-slate-950/20">
-        <table className="w-full text-xs text-left text-slate-350 select-none">
+      {/* Quick Filter Chips Row */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-4 select-none">
+        {[
+          { id: 'all', label: 'All' },
+          { id: 'failed', label: 'Failed' },
+          { id: 'low-cov', label: 'Coverage < 90%' },
+          { id: 'high-cost', label: 'High Cost' },
+          { id: 'redundant', label: 'Redundant' },
+        ].map((chip) => {
+          const isActive = activeFilter === chip.id;
+          return (
+            <button
+              key={chip.id}
+              onClick={() => {
+                setActiveFilter(chip.id as any);
+                setPagination(prev => ({ ...prev, pageIndex: 0 }));
+              }}
+              className={cn(
+                'px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-lg border transition duration-150 cursor-pointer',
+                isActive
+                  ? 'bg-indigo-650/80 text-white border-indigo-500 shadow-md shadow-indigo-600/10'
+                  : 'bg-slate-950/40 text-slate-400 border-slate-850 hover:text-slate-200 hover:bg-slate-900/60'
+              )}
+            >
+              {chip.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* TanStack Table Element with vertical scroll height constraint & column pinning */}
+      <div className="overflow-x-auto rounded-xl border border-slate-900 bg-slate-950/20 max-h-[350px] overflow-y-auto">
+        <table className="w-full text-xs text-left text-slate-350 select-none relative border-collapse">
           <thead>
             {table.getHeaderGroups().map(hg => (
               <tr
                 key={hg.id}
                 style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
-                className="bg-slate-950/40 text-slate-500 font-semibold uppercase tracking-wider sticky top-0"
+                className="bg-slate-950/90 text-slate-500 font-semibold uppercase tracking-wider sticky top-0 z-20 backdrop-blur-sm"
               >
-                {hg.headers.map(h => {
+                {hg.headers.map((h, idx) => {
                   const isSortable = h.column.getCanSort();
                   const sorted = h.column.getIsSorted();
                   return (
@@ -219,7 +269,8 @@ export default function PatternSummaryTable({
                       onClick={h.column.getToggleSortingHandler()}
                       className={cn(
                         'px-4 py-3 text-[11px] letter-spacing-[0.05em] uppercase font-bold select-none transition-colors duration-150',
-                        isSortable ? 'cursor-pointer hover:bg-slate-900/40 hover:text-slate-300' : ''
+                        isSortable ? 'cursor-pointer hover:bg-slate-900/40 hover:text-slate-300' : '',
+                        idx === 0 ? 'sticky left-0 bg-slate-950 z-30 shadow-[2px_0_5px_rgba(0,0,0,0.3)]' : ''
                       )}
                     >
                       <div className="flex items-center gap-1">
@@ -238,10 +289,10 @@ export default function PatternSummaryTable({
               Array.from({ length: 6 }).map((_, i) => (
                 <SkeletonRow key={i} columns={3} />
               ))
-            ) : patternsData.length === 0 ? (
+            ) : filteredPatternsData.length === 0 ? (
               <tr>
                 <td colSpan={3} className="px-4 py-12 text-center text-slate-500 font-medium select-none">
-                  No patterns found matching query.
+                  No patterns found matching filter.
                 </td>
               </tr>
             ) : (
@@ -254,16 +305,31 @@ export default function PatternSummaryTable({
                     onClick={() => onSelectPattern(row.original.patternId)}
                     style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}
                     className={cn(
-                      'cursor-pointer transition-all duration-150 text-[13px] text-slate-200',
+                      'cursor-pointer transition-all duration-150 text-[13px] text-slate-200 bg-transparent',
                       isSelected
-                        ? 'bg-blue-500/15 border-l-[3px] border-l-blue-400 font-semibold shadow-[0_0_15px_rgba(59,130,246,0.1)]'
+                        ? 'bg-blue-500/15 font-semibold shadow-[0_0_15px_rgba(59,130,246,0.1)]'
                         : isFocused
-                          ? 'bg-blue-500/10 border-l-[3px] border-l-blue-500/60 shadow-[inset_0_0_8px_rgba(59,130,246,0.15)] font-medium text-white'
-                          : 'bg-transparent hover:bg-blue-500/[0.08] hover:border-l-[3px] hover:border-l-blue-500'
+                          ? 'bg-blue-500/10 shadow-[inset_0_0_8px_rgba(59,130,246,0.15)] font-medium text-white'
+                          : 'hover:bg-blue-500/[0.08]'
                     )}
                   >
-                    {row.getVisibleCells().map(cell => (
-                      <td key={cell.id} className="px-4 py-3">
+                    {row.getVisibleCells().map((cell, idx) => (
+                      <td
+                        key={cell.id}
+                        className={cn(
+                          'px-4 py-3',
+                          idx === 0
+                            ? cn(
+                                'sticky left-0 z-10 shadow-[2px_0_5px_rgba(0,0,0,0.35)] transition-colors',
+                                isSelected
+                                  ? 'bg-[#1e2e50]'
+                                  : isFocused
+                                    ? 'bg-[#182645]'
+                                    : 'bg-[#12192e]'
+                              )
+                            : ''
+                        )}
+                      >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     ))}
@@ -276,12 +342,12 @@ export default function PatternSummaryTable({
       </div>
 
       {/* Pagination Controls */}
-      {!isLoading && patternsData.length > 0 && (
+      {!isLoading && filteredPatternsData.length > 0 && (
         <div className="flex items-center justify-between mt-4 text-xs text-slate-500 select-none">
           <div>
             Showing <span className="font-mono font-semibold text-slate-400">{startIdx}</span>–
             <span className="font-mono font-semibold text-slate-400">{endIdx}</span> of{' '}
-            <span className="font-mono font-semibold text-slate-400">{patternsData.length}</span> patterns
+            <span className="font-mono font-semibold text-slate-400">{filteredPatternsData.length}</span> patterns
           </div>
 
           <div className="flex items-center gap-2">
@@ -310,3 +376,4 @@ export default function PatternSummaryTable({
     </GlassCard>
   );
 }
+

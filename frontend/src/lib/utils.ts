@@ -29,7 +29,7 @@ export function formatPercent(value: number, decimals = 1): string {
 export function formatMs(ms: number): string {
   if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)} min`;
   if (ms >= 1_000)  return `${(ms / 1_000).toFixed(2)} s`;
-  return `${ms.toFixed(0)} ms`;
+  return `${ms.toFixed(1)} ms`;
 }
 
 export function formatNumber(value: number, compact = false): string {

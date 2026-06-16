@@ -139,6 +139,9 @@ mock.onGet('/equipment/alerts').reply(200, {
 const DOMAINS = ['SCAN', 'MBIST', 'LBIST', 'IDDQ', 'FUNCTIONAL', 'AT_SPEED'];
 const FAULT_CLASSES = ['STUCK_AT', 'TRANSITION', 'BRIDGE', 'CELL_AWARE'];
 
+// Let the Next.js local dynamic API route handle /patterns to return the correct redesign schema
+mock.onGet('/patterns').passThrough();
+/*
 mock.onGet('/patterns').reply(200, {
   data: Array.from({ length: 20 }).map((_, i) => ({
     id: `pat-${i}`,
@@ -154,6 +157,7 @@ mock.onGet('/patterns').reply(200, {
   })),
   total: 1284,
 });
+*/
 
 mock.onGet('/patterns/kpis').reply(200, {
   totalPatterns: 1284,

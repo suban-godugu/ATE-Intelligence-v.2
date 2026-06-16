@@ -39,31 +39,36 @@ const TESTER_OPTIONS = [
 
 const NAV_SECTIONS = [
   {
-    title: 'Analytics',
+    title: 'Dashboard',
     items: [
       { href: '/dashboard',                   label: 'Dashboard',             id: 'nav-dashboard',  Icon: IconLayoutDashboard },
-      { href: '/dashboard/upload',            label: 'Upload Files',          id: 'nav-upload',     Icon: IconUpload          },
     ],
   },
   {
-    title: 'Engineering',
+    title: 'Data Management',
+    items: [
+      { href: '/dashboard/upload',            label: 'Upload Files',          id: 'nav-upload',     Icon: IconUpload          },
+      { href: '/dashboard/reports',           label: 'Reports',               id: 'nav-reports',    Icon: IconFileText        },
+    ],
+  },
+  {
+    title: 'Analysis',
     items: [
       { href: '/dashboard/pattern-analysis',  label: 'Pattern Analysis',      id: 'nav-patterns',   Icon: IconCpu             },
-      { href: '/dashboard/test-optimization', label: 'Test Optimization',     id: 'nav-testopt',    Icon: IconFlask           },
+      { href: '/dashboard/wafer-lot',         label: 'Wafer Analytics',       id: 'nav-wafer',      Icon: IconLayers          },
+      { href: '/dashboard/equipment',         label: 'Equipment',             id: 'nav-equipment',  Icon: IconWrench          },
     ],
   },
   {
-    title: 'Operations',
+    title: 'Optimization',
     items: [
-      { href: '/dashboard/wafer-lot',         label: 'Wafer / Lot Analytics', id: 'nav-wafer',      Icon: IconLayers          },
-      { href: '/dashboard/equipment',         label: 'Equipment',             id: 'nav-equipment',  Icon: IconWrench          },
+      { href: '/dashboard/test-optimization', label: 'Test Optimization',     id: 'nav-testopt',    Icon: IconFlask           },
       { href: '/dashboard/cost',              label: 'Cost Intelligence',     id: 'nav-cost',       Icon: IconDollar          },
     ],
   },
   {
     title: 'System',
     items: [
-      { href: '/dashboard/reports',           label: 'Reports',               id: 'nav-reports',    Icon: IconFileText        },
       { href: '/dashboard/alerts',            label: 'Alerts',                id: 'nav-alerts',     Icon: IconBell            },
       { href: '/dashboard/settings',          label: 'Settings',              id: 'nav-settings',   Icon: IconSettings        },
     ],

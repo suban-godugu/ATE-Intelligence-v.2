@@ -27,7 +27,16 @@ const nextConfig = {
 
   async rewrites() {
     return [
-      // Proxy all /api/* requests from the browser → NestJS backend
+      // Bypass proxy for patterns so local mock catch-all routes handle it
+      {
+        source: '/api/patterns',
+        destination: '/api/patterns',
+      },
+      {
+        source: '/api/patterns/:path*',
+        destination: '/api/patterns/:path*',
+      },
+      // Proxy all other /api/* requests from the browser → NestJS backend
       // This avoids CORS issues and the need to set NEXT_PUBLIC_API_URL
       {
         source: '/api/:path*',

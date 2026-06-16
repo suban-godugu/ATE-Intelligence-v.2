@@ -12,9 +12,6 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <head>
-        {/* Times New Roman is a system font — no external import needed */}
-      </head>
       <body className="antialiased">
         <Providers>
           {children}

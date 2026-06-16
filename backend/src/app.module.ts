@@ -15,6 +15,7 @@ import { WaferImageModule } from './wafer-image/wafer-image.module';
 import { MinioModule } from './minio/minio.module';
 import { AteDftModule } from './ate-dft/ate-dft.module';
 import { UploadModule } from './dashboard/upload/upload.module';
+import { ModelValidationModule } from './model-validation/model-validation.module';
 
 @Module({
   imports: [
@@ -46,6 +47,9 @@ import { UploadModule } from './dashboard/upload/upload.module';
           host: configService.get<string>('redis.host') || 'localhost',
           port: configService.get<number>('redis.port') || 6379,
           maxRetriesPerRequest: null,
+          enableOfflineQueue: false,
+          lazyConnect: true,
+          retryStrategy: (times: number) => Math.min(times * 500, 5000),
         },
       }),
     }),
@@ -56,6 +60,7 @@ import { UploadModule } from './dashboard/upload/upload.module';
     MinioModule,
     AteDftModule,
     UploadModule,
+    ModelValidationModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService],

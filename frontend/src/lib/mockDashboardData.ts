@@ -13,69 +13,69 @@ import type {
 // ── KPI Metrics ───────────────────────────────────────────────────────────────
 export const mockKpis: KpiMetric[] = [
   {
-    id: 'cost-per-wafer',
-    label: 'Average Wafer Cost',
-    value: 284.70,
-    formatted: '$284.70',
-    delta: -8.3,
-    deltaFormatted: '-8.3%',
+    id: 'total-test-cost',
+    label: 'Total Test Cost',
+    value: 1240000,
+    formatted: '$1.24M',
+    delta: -12.6,
+    deltaFormatted: '12.6%',
     trend: 'down',
     format: 'currency',
-    colorAccent: 'accent-cyan',
+    colorAccent: 'accent-purple',
+  },
+  {
+    id: 'cost-per-wafer',
+    label: 'Cost per Wafer',
+    value: 58.42,
+    formatted: '$58.42',
+    delta: -8.3,
+    deltaFormatted: '8.3%',
+    trend: 'down',
+    format: 'currency',
+    colorAccent: 'accent-blue',
+  },
+  {
+    id: 'cost-per-die',
+    label: 'Cost per Die',
+    value: 0.0213,
+    formatted: '$0.0213',
+    delta: -9.7,
+    deltaFormatted: '9.7%',
+    trend: 'down',
+    format: 'currency',
+    colorAccent: 'accent-green',
+  },
+  {
+    id: 'test-time',
+    label: 'Test Time (Avg)',
+    value: 42.6,
+    formatted: '42.6 ms',
+    delta: -7.1,
+    deltaFormatted: '7.1%',
+    trend: 'down',
+    format: 'ms',
+    colorAccent: 'accent-amber',
   },
   {
     id: 'yield',
-    label: 'Silicon Yield (Wafer Level)',
-    value: 93.7,
-    formatted: '93.7%',
-    delta: 2.1,
-    deltaFormatted: '+2.1%',
+    label: 'Yield (Overall)',
+    value: 98.34,
+    formatted: '98.34%',
+    delta: 1.8,
+    deltaFormatted: '1.8%',
     trend: 'up',
     format: 'percent',
     colorAccent: 'accent-green',
   },
   {
-    id: 'test-time',
-    label: 'ATE Sweep Duration',
-    value: 18340,
-    formatted: '18.34 s',
-    delta: -12.5,
-    deltaFormatted: '-12.5%',
-    trend: 'down',
-    format: 'ms',
-    colorAccent: 'accent-blue',
-  },
-  {
-    id: 'daily-savings',
-    label: 'Amortized Daily Savings',
-    value: 47200,
-    formatted: '$47.2K',
-    delta: 31.4,
-    deltaFormatted: '+31.4%',
+    id: 'roi-improvement',
+    label: 'ROI Improvement',
+    value: 320000,
+    formatted: '$320K',
+    delta: 14.2,
+    deltaFormatted: '14.2%',
     trend: 'up',
     format: 'currency',
-    colorAccent: 'accent-purple',
-  },
-  {
-    id: 'fail-count',
-    label: 'Defective Die Count',
-    value: 1247,
-    formatted: '1,247',
-    delta: -18.2,
-    deltaFormatted: '-18.2%',
-    trend: 'down',
-    format: 'count',
-    colorAccent: 'accent-amber',
-  },
-  {
-    id: 'pattern-coverage',
-    label: 'Fault Coverage (DPMO)',
-    value: 98.4,
-    formatted: '98.4%',
-    delta: 0.3,
-    deltaFormatted: '+0.3%',
-    trend: 'up',
-    format: 'percent',
     colorAccent: 'accent-pink',
   },
 ];
@@ -176,7 +176,7 @@ export const mockHeatmap: HeatmapResponse = {
     passCount: heatmapDies.filter(d => d.bin === 1).length,
     failCount: heatmapDies.filter(d => d.bin !== 1).length,
     yieldPct: 93.7,
-    avgCost: 284.70,
+    avgCost: 58.42,
   },
 };
 
@@ -215,11 +215,11 @@ export const mockPatternCostPage1: PatternCostResponse = {
 // ── Cost Trend ─────────────────────────────────────────────────────────────────
 function generateTrendSeries(days: number): TrendPoint[] {
   const pts: TrendPoint[] = [];
-  let cost = 340;
+  let cost = 75;
   for (let i = days; i >= 0; i--) {
     const d = new Date(Date.now() - i * 86400000);
-    cost = cost + (Math.random() - 0.55) * 8;
-    cost = Math.max(240, Math.min(380, cost));
+    cost = cost + (Math.random() - 0.55) * 2;
+    cost = Math.max(45, Math.min(95, cost));
     pts.push({
       date:           d.toISOString().split('T')[0],
       actualCost:     parseFloat(cost.toFixed(2)),
@@ -234,8 +234,8 @@ function generateTrendSeries(days: number): TrendPoint[] {
 export const mockCostTrend: CostTrendResponse = {
   granularity: 'daily',
   series:      generateTrendSeries(30),
-  baseline:    340,
-  currentAvg:  284.70,
+  baseline:    75,
+  currentAvg:  58.42,
   improvement: 16.3,
 };
 

@@ -418,3 +418,31 @@ model AteDftPrediction {
 
   @@map("ate_dft_predictions")
 }
+
+model ValidationReport {
+  id                  String    @id @default(cuid())
+  validationId        String    @unique
+  filename            String
+  fileSizeBytes       Int
+  fileCategory        String
+  dataType            String
+  status              String    // VALID | INVALID | WARNING
+  confidenceScore     Float
+  rowCount            Int?
+  columnCount         Int?
+  imageWidth          Int?
+  imageHeight         Int?
+  imageChannels       Int?
+  issueCount          Int       @default(0)
+  errorCount          Int       @default(0)
+  warningCount        Int       @default(0)
+  recommendedPipeline String
+  reportJson          Json
+  triggerPrediction   Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([status])
+  @@index([fileCategory])
+  @@index([createdAt])
+}

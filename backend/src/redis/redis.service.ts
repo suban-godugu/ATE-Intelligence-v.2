@@ -17,6 +17,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       host,
       port,
       maxRetriesPerRequest: null, // Critical for BullMQ
+      enableOfflineQueue: false,
+      lazyConnect: true,
+      retryStrategy: (times) => Math.min(times * 500, 5000),
     });
 
     this.client.on('connect', () => {
@@ -24,7 +27,7 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.client.on('error', (err) => {
-      this.logger.error('Redis connection error:', err);
+      this.logger.warn(`Redis connection error (non-fatal): ${err.message}`);
     });
   }
 
@@ -45,6 +48,33 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   async del(key: string): Promise<number> {
     return this.client.del(key);
+  }
+
+  async lpush(key: string, ...values: string[]): Promise<number> {
+    return this.client.lpush(key, ...values);
+  }
+
+  async rpush(key: string, ...values: string[]): Promise<number> {
+    return this.client.rpush(key, ...values);
+  }
+
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    return this.client.lrange(key, start, stop);
+  }
+
+  async lrem(key: string, count: number, value: string): Promise<number> {
+    return this.client.lrem(key, count, value);
+  }
+
+  async setBuffer(key: string, value: Buffer, ttlSeconds?: number): Promise<string> {
+    if (ttlSeconds) {
+      return this.client.set(key, value as any, 'EX', ttlSeconds);
+    }
+    return this.client.set(key, value as any);
+  }
+
+  async getBuffer(key: string): Promise<Buffer | null> {
+    return this.client.getBuffer(key);
   }
 
   async delWildcard(pattern: string): Promise<void> {

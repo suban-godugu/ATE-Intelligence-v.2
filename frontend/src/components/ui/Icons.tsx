@@ -42,4 +42,6 @@ export {
   Menu             as IconMenu,
   X                as IconX,
   Microchip        as IconMicrochip,
+  Rocket           as IconRocket,
+  Check            as IconCheck,
 } from 'lucide-react';

@@ -1,14 +1,13 @@
-import { WaferImageType, StorageBackend } from '@prisma/client';
-
 export class WaferAiImageDto {
-  type: WaferImageType;
+  type: string;
   url: string;
-  backend: StorageBackend;
+  backend: string;
 }
 
 export class WaferAiResponseDto {
-  id: string;
+  id?: string;
   patternLabel: string;
+  class?: string;
   confidence: number;
   lot: string;
   good: number;
@@ -18,4 +17,8 @@ export class WaferAiResponseDto {
   probabilities: any;
   timestamp: string;
   images: WaferAiImageDto[];
+  // Returned as base64 data URLs when MinIO is unavailable
+  overlayDataUrl?: string;
+  densityDataUrl?: string;
+  attentionDataUrl?: string;
 }

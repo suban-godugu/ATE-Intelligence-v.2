@@ -53,6 +53,7 @@ backend/node_modules/.prisma/
 
 # ── Redis Windows binary (large, downloadable) ────────────────────────────
 electron/assets/redis/
+redis-win/
 
 # ── Electron build cache ──────────────────────────────────────────────────
 electron-builder-cache/

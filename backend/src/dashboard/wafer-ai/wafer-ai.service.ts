@@ -70,24 +70,38 @@ export class WaferAiService {
       contentType: file.mimetype,
     });
 
+    // ── Step 1: Call FastAPI (fatal if unreachable) ─────────────────────
+    let result: any;
+    let patternLabel: string;
+    let confidence: number;
+    let lot: string;
     try {
       const response = await axios.post(`${this.aiUrl}/predict`, form, {
         headers: form.getHeaders(),
         timeout: 30000,
       });
+      result = response.data;
+      patternLabel = result.patternLabel || result.class || 'Normal';
+      confidence = Number(result.confidence ?? 0);
+      lot = LOT_MAPPING[patternLabel] ?? 'LOT_UNKNOWN';
+    } catch (error: any) {
+      this.logger.error(`FastAPI prediction error: ${error.message}`);
+      throw new ServiceUnavailableException(
+        'WaferVision AI service is not reachable. Ensure the FastAPI server is running on port 8000.',
+      );
+    }
 
-      const result = response.data;
-      const patternLabel = result.patternLabel || result.class || 'Normal';
-      const confidence = Number(result.confidence ?? 0);
-      const lot = LOT_MAPPING[patternLabel] ?? 'LOT_UNKNOWN';
+    // ── Step 2: Persist to DB + MinIO (non-fatal) ─────────────────────────
+    const imageUrls: { type: string; url: string; backend: string }[] = [];
+    try {
 
       const aiWaferData = {
         name: file.originalname,
         class: patternLabel,
         confidence,
         lot,
-        good: Number(result.good ?? 0),
-        fail: Number(result.fail ?? 0),
+        good:  Number(result.good  ?? 0),
+        fail:  Number(result.fail  ?? 0),
         total: Number(result.total ?? 0),
         yield: Number(result.yield ?? 0),
         probabilities: result.probabilities ?? {},
@@ -200,13 +214,14 @@ export class WaferAiService {
       );
 
       // Build image URL map for API response
-      const imageUrls = await Promise.all(
+      const savedUrls = await Promise.all(
         savedImages.map(async img => ({
           type: img.imageType,
           url: await this.storageService.getAccessUrl(img.id),
-          backend: img.storageBackend,
+          backend: img.storageBackend as string,
         }))
       );
+      imageUrls.push(...savedUrls);
 
       // Find original image ID to link
       const rawImg = savedImages.find(img => img.imageType === WaferImageType.RAW_BIN_MAP);
@@ -238,27 +253,29 @@ export class WaferAiService {
         this.logger.log(`Saved ${diesToCreate.length} Die records to database for wafer.`);
       }
 
-      this.logger.log(`Predicted & Saved to DB with binary WaferImage: ${patternLabel} (${confidence}%) → ${lot}`);
-
-      return {
-        id: wafer.id,
-        patternLabel,
-        confidence,
-        images: imageUrls,
-        lot,
-        good: wafer.good,
-        fail: wafer.fail,
-        total: wafer.total,
-        yield: wafer.yield,
-        probabilities: wafer.probabilities,
-        timestamp: wafer.timestamp.toISOString(),
-      };
-    } catch (error: any) {
-      this.logger.error(`FastAPI prediction error: ${error.message}`);
-      throw new ServiceUnavailableException(
-        'WaferVision AI service is not reachable. Ensure the FastAPI server is running on port 8000.',
-      );
+      this.logger.log(`Predicted & Saved to DB: ${patternLabel} (${confidence}%) → ${lot}`);
+    } catch (dbErr: any) {
+      this.logger.warn(`DB/Storage save failed (non-fatal, falling back to base64): ${dbErr.message}`);
     }
+
+    // ── Step 3: Build final response ──────────────────────────────────────
+    const hasStoredUrls = imageUrls.length > 0;
+    return {
+      patternLabel,
+      class: patternLabel,
+      confidence,
+      images: hasStoredUrls ? imageUrls : [],
+      lot,
+      good:  Number(result.good  ?? 0),
+      fail:  Number(result.fail  ?? 0),
+      total: Number(result.total ?? 0),
+      yield: Number(result.yield ?? 0),
+      probabilities: result.probabilities ?? {},
+      overlayDataUrl:   hasStoredUrls ? undefined : result.overlayDataUrl,
+      densityDataUrl:   hasStoredUrls ? undefined : result.densityDataUrl,
+      attentionDataUrl: hasStoredUrls ? undefined : result.attentionDataUrl,
+      timestamp: new Date().toISOString(),
+    };
   }
 
   async getLots(): Promise<Record<string, LotData>> {

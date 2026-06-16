@@ -8,6 +8,10 @@ from PIL import Image
 
 from predict import predict_api
 from dice_analysis import analyze_wafer
+from model_validator import router as validator_router
+from optimizer_model import run_constraint_pruning
+from pydantic import BaseModel
+from typing import List, Dict, Any
 
 # =====================================================
 # FASTAPI APP
@@ -16,6 +20,50 @@ app = FastAPI(
     title="WaferVision AI API",
     version="1.0"
 )
+
+app.include_router(validator_router, prefix="/validate", tags=["Validation"])
+
+# =====================================================
+# PYDANTIC MODEL SCHEMAS FOR OPTIMIZER
+# =====================================================
+class PatternDataInput(BaseModel):
+    id: str
+    patternId: str
+    patternType: str
+    killRatio: float
+    testTimeMs: float
+    costUsd: float
+    roiScore: float
+
+class OptimizationConstraintsInput(BaseModel):
+    maxCostPerWafer: float
+    yieldTarget: float
+    maxTestTimeMs: float
+
+class OptimizerRequest(BaseModel):
+    patterns: List[PatternDataInput]
+    constraints: OptimizationConstraintsInput
+    waferCount: int = 5
+    diesPerWafer: int = 489
+    originalYield: float = 92.14
+
+# =====================================================
+# YIELD OPTIMIZATION ROUTE
+# =====================================================
+@app.post("/predict/yield-optimization", tags=["Prediction"])
+def optimize_patterns(payload: OptimizerRequest):
+    patterns_dict = [p.dict() for p in payload.patterns]
+    constraints_dict = payload.constraints.dict()
+    
+    results = run_constraint_pruning(
+        patterns=patterns_dict,
+        constraints=constraints_dict,
+        wafer_count=payload.waferCount,
+        dies_per_wafer=payload.diesPerWafer,
+        original_yield=payload.originalYield
+    )
+    return results
+
 
 # =====================================================
 # TEMP FOLDER

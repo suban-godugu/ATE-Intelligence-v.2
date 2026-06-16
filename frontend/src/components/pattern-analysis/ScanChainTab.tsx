@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import PatternSummaryTable, { usePatternsList } from './PatternSummaryTable';
 import ChainAnalysisPanel, { useChainsList } from './ChainAnalysisPanel';
 import FlipFlopModal from './FlipFlopModal';
@@ -186,13 +186,17 @@ export default function ScanChainTab() {
   ];
   if (selectedPatternId) {
     breadcrumbItems.push({
-      label: `Pattern: ${selectedPatternId}`,
+      label: selectedPatternId,
       onClick: () => updateParams(selectedPatternId, null),
     });
   }
   if (selectedChain) {
     breadcrumbItems.push({
-      label: `Chain: ${selectedChain.chainId}`,
+      label: selectedChain.chainId,
+      onClick: () => updateParams(selectedPatternId, selectedChain.chainId),
+    });
+    breadcrumbItems.push({
+      label: 'Flip-Flop Analysis',
     });
   }
 
@@ -209,7 +213,7 @@ export default function ScanChainTab() {
       {/* Dynamic Two-Column Layout Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* Left Column: Pattern Summary Table */}
-        <div className={selectedPatternId ? "lg:col-span-5" : "lg:col-span-12"}>
+        <div className="lg:col-span-7">
           <PatternSummaryTable
             selectedPatternId={selectedPatternId}
             onSelectPattern={(patId) => updateParams(patId, null)}
@@ -217,10 +221,24 @@ export default function ScanChainTab() {
           />
         </div>
 
-        {/* Right Column: Chain Analysis Panel */}
-        <div className={selectedPatternId ? "lg:col-span-7" : "hidden"}>
-          <AnimatePresence mode="wait">
-            {selectedPatternId && (
+        {/* Right Column: Overview Right Panel */}
+        <div className="lg:col-span-5">
+          <ScanChainOverviewRightPanel 
+            key="overview-right"
+            onSelectPattern={(patId) => updateParams(patId, null)}
+          />
+        </div>
+      </div>
+
+      {/* Failed Chain Analysis Modal Popup */}
+      <AnimatePresence>
+        {selectedPatternId && (
+          <div className="fixed inset-0 z-45 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xl overflow-hidden select-none">
+            {/* Backdrop click closes the modal */}
+            <div className="absolute inset-0 cursor-default" onClick={() => updateParams(null, null)} />
+            
+            {/* Modal Body Container */}
+            <div className="relative z-10 w-[85vw] max-w-[1200px] max-h-[85vh] overflow-y-auto">
               <ChainAnalysisPanel
                 key={selectedPatternId}
                 patternId={selectedPatternId}
@@ -228,12 +246,12 @@ export default function ScanChainTab() {
                 onSelectChain={(chId, chData) => updateParams(selectedPatternId, chId)}
                 focusedChainId={focusedChainId}
               />
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
 
-      {/* Level 3: Flip-Flop Detail Modal */}
+      {/* Level 3: Flip-Flop Detail Modal Popup */}
       <AnimatePresence>
         {selectedChain && isFlipFlopModalOpen && (
           <FlipFlopModal
@@ -245,5 +263,104 @@ export default function ScanChainTab() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function ScanChainOverviewRightPanel({ onSelectPattern }: { onSelectPattern: (patId: string) => void }) {
+  // IP domain hotspots for the Chain Density Map
+  const ipDomains = [
+    { name: 'USB_PHY', count: 68, pct: 100, color: 'rgba(239, 68, 68, 0.75)', textColor: '#F87171' },
+    { name: 'GPU_CLUSTER', count: 42, pct: 62, color: 'rgba(245, 158, 11, 0.75)', textColor: '#FBBF24' },
+    { name: 'NPU_ARRAY', count: 35, pct: 51, color: 'rgba(245, 158, 11, 0.6)', textColor: '#FCD34D' },
+    { name: 'CPU_CORE', count: 24, pct: 35, color: 'rgba(59, 130, 246, 0.75)', textColor: '#60A5FA' },
+    { name: 'PCIE_PHY', count: 12, pct: 18, color: 'rgba(16, 185, 129, 0.75)', textColor: '#34D399' }
+  ];
+
+  // Worst failing chains dashboard (clicking a row selects the parent pattern)
+  const topFailingChains = [
+    { chainId: 'CH-SCN-0004-01', patternId: 'SCN-0004', failures: 11, failRate: 7.6, domain: 'USB_PHY' },
+    { chainId: 'CH-SCN-0023-01', patternId: 'SCN-0023', failures: 11, failRate: 2.9, domain: 'GPU_CLUSTER' },
+    { chainId: 'CH-SCN-0006-01', patternId: 'SCN-0006', failures: 11, failRate: 1.5, domain: 'USB_PHY' },
+    { chainId: 'CH-SCN-0020-01', patternId: 'SCN-0020', failures: 11, failRate: 0.6, domain: 'PCIE_PHY' },
+    { chainId: 'CH-SCN-0005-01', patternId: 'SCN-0005', failures: 10, failRate: 8.7, domain: 'NPU_ARRAY' }
+  ];
+
+  return (
+    <motion.div
+      initial={{ x: 20, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: 20, opacity: 0 }}
+      transition={{ duration: 0.25 }}
+      className="space-y-5"
+    >
+      {/* Chain Density Map */}
+      <GlassCard borderColor="rgba(245, 158, 11, 0.2)" glowColor="rgba(245, 158, 11, 0.04)" padding="20px 24px" className="shadow-lg select-none">
+        <h3 className="text-[16px] font-bold text-white tracking-tight leading-none mb-4 flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+          Chain Failure Density Map
+        </h3>
+        
+        <div className="space-y-3">
+          {ipDomains.map((domain) => (
+            <div key={domain.name} className="space-y-1">
+              <div className="flex justify-between items-center text-[11px] font-semibold text-slate-400">
+                <span className="font-mono tracking-wide">{domain.name}</span>
+                <span style={{ color: domain.textColor }} className="font-bold">{domain.count} Fails</span>
+              </div>
+              <div className="w-full bg-slate-950/60 h-2 rounded-full overflow-hidden border border-slate-900">
+                <div 
+                  className="h-full rounded-full transition-all duration-500" 
+                  style={{ 
+                    width: `${domain.pct}%`, 
+                    backgroundColor: domain.color,
+                    boxShadow: `0 0 8px ${domain.color}`
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+
+      {/* Top Failing Scan Chains Dashboard */}
+      <GlassCard borderColor="rgba(239, 68, 68, 0.2)" glowColor="rgba(239, 68, 68, 0.04)" padding="20px 24px" className="shadow-lg select-none">
+        <h3 className="text-[16px] font-bold text-white tracking-tight leading-none mb-1 flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+          Top Failing Scan Chains
+        </h3>
+        <p className="text-[11px] text-slate-500 mb-4 font-semibold uppercase tracking-wider">Hotspots across all active patterns</p>
+        
+        <div className="overflow-x-auto rounded-xl border border-slate-900 bg-slate-950/20">
+          <table className="w-full text-xs text-left text-slate-350 select-none">
+            <thead>
+              <tr className="bg-slate-950/40 text-slate-500 font-semibold uppercase tracking-wider text-[10px]">
+                <th className="px-3 py-2.5 font-bold">Chain ID</th>
+                <th className="px-3 py-2.5 font-bold">Domain</th>
+                <th className="px-3 py-2.5 font-bold text-right">Fails / Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topFailingChains.map((ch) => (
+                <tr 
+                  key={ch.chainId}
+                  onClick={() => onSelectPattern(ch.patternId)}
+                  className="bg-transparent hover:bg-red-500/[0.04] transition-all duration-150 cursor-pointer border-b border-slate-950"
+                >
+                  <td className="px-3 py-2.5">
+                    <span className="font-mono font-bold text-blue-400">{ch.chainId}</span>
+                    <span className="text-[9px] text-slate-500 block font-mono">Pattern: {ch.patternId}</span>
+                  </td>
+                  <td className="px-3 py-2.5 font-semibold text-slate-300">{ch.domain}</td>
+                  <td className="px-3 py-2.5 text-right font-mono">
+                    <span className="font-extrabold text-red-400 block">{ch.failures} FF</span>
+                    <span className="text-[9px] text-slate-500 block">{ch.failRate}%</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </GlassCard>
+    </motion.div>
   );
 }

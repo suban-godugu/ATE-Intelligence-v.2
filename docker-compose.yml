@@ -44,7 +44,7 @@ services:
     volumes:
       - ./ai wafer dashbooad/models:/app/models:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8000/ || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/')\" || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 3
@@ -67,6 +67,12 @@ services:
       REDIS_PORT: 6379
       FRONTEND_URL: http://localhost
       WAFER_AI_URL: http://wafer-ai:8000
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-compty_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change_me_in_production}
+      MINIO_BUCKET_WAFER: ${MINIO_BUCKET_WAFER:-wafer-images}
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,7 +145,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -9,6 +9,7 @@ import { SectionHeader, Badge, CoverageBar, DataTable } from '@/components/ui/Ch
 import { GlassCard } from './SharedComponents';
 import { bistData } from '@/lib/mockData';
 import { format } from 'date-fns';
+import { Sparkles } from 'lucide-react';
 
 const TYPE_COLORS: Record<string, string> = {
   MBIST: '#3b82f6',
@@ -63,57 +64,51 @@ export default function BistTab() {
   ]);
 
   return (
-    <div className="space-y-6 fade-in-up">
-      {/* KPI */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 select-none">
-        <StatCard title="Total BIST Tests" value={totalTests} subtitle="All types combined" color="blue" />
-        <StatCard title="Passed" value={totalPass} subtitle={`${((totalPass / totalTests) * 100).toFixed(1)}% pass rate`} color="green" />
-        <StatCard title="Failed" value={totalFail} subtitle="Across all types" color="red" />
-        <StatCard title="Total Duration" value={`${(totalDuration / 1000).toFixed(1)}s`} subtitle="Combined execution" color="cyan" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 items-stretch">
-        {/* Type pie */}
+    <div className="fade-in-up">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-stretch">
+        {/* Row 1 Left: Type pie */}
         <GlassCard
           borderColor="rgba(249, 115, 22, 0.25)" // Orange accent for BIST
           glowColor="rgba(249, 115, 22, 0.08)"
-          padding="24px"
+          padding="20px"
           className="relative shadow-lg flex flex-col justify-between"
         >
           <div>
             <SectionHeader title="BIST Type Distribution" subtitle="Test count by type" />
-            <ResponsiveContainer width="100%" height={240}>
-              <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" outerRadius={90} innerRadius={55} paddingAngle={4} dataKey="value">
-                  {pieData.map((entry, i) => (
-                    <Cell key={entry.name} fill={TYPE_COLORS[entry.name]} stroke="transparent" />
-                  ))}
-                </Pie>
-                <Tooltip content={<CustomTooltip />} />
-                <Legend iconType="circle" iconSize={8} formatter={(v) => <span className="text-xs text-slate-400">{v}</span>} />
-              </PieChart>
-            </ResponsiveContainer>
+            <div className="h-[220px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" outerRadius={85} innerRadius={50} paddingAngle={4} dataKey="value">
+                    {pieData.map((entry, i) => (
+                      <Cell key={entry.name} fill={TYPE_COLORS[entry.name]} stroke="transparent" />
+                    ))}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend iconType="circle" iconSize={8} formatter={(v) => <span className="text-xs text-slate-450 font-semibold">{v}</span>} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </GlassCard>
 
-        {/* Coverage by type */}
+        {/* Row 1 Right: Coverage by type */}
         <GlassCard
           borderColor="rgba(249, 115, 22, 0.25)"
           glowColor="rgba(249, 115, 22, 0.08)"
-          padding="24px"
+          padding="20px"
           className="relative shadow-lg flex flex-col justify-between"
         >
           <div>
-            <SectionHeader title="Coverage & Pass Rate by Type" />
-            <div className="space-y-4 pt-2">
+            <SectionHeader title="Coverage & Pass Rate by Type" subtitle="BIST execution status summary" />
+            <div className="space-y-3 pt-2">
               {byType.map((t) => (
-                <div key={t.bistType} className="space-y-2 select-none">
-                  <div className="flex items-center justify-between">
+                <div key={t.bistType} className="space-y-1 select-none">
+                  <div className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
-                      <div className="h-2.5 w-2.5 rounded-full animate-pulse" style={{ background: TYPE_COLORS[t.bistType] }} />
-                      <span className="text-sm font-semibold text-slate-300">{t.bistType}</span>
+                      <div className="h-2 w-2 rounded-full animate-pulse" style={{ background: TYPE_COLORS[t.bistType] }} />
+                      <span className="font-semibold text-slate-300">{t.bistType}</span>
                     </div>
-                    <div className="flex items-center gap-3 text-xs">
+                    <div className="flex items-center gap-2.5">
                       <span className="text-emerald-450 font-bold">Pass: {t.totalPass}</span>
                       <span className="text-red-405 font-bold">Fail: {t.totalFail}</span>
                       <span className="font-mono font-bold text-slate-205">{t.avgCoverage}%</span>
@@ -123,36 +118,88 @@ export default function BistTab() {
                 </div>
               ))}
 
-              <div className="mt-4 rounded-xl border border-slate-900 bg-slate-950/20 p-3 select-none">
-                <ResponsiveContainer width="100%" height={140}>
+              <div className="mt-2 rounded-xl border border-slate-900 bg-slate-950/20 p-2.5 select-none h-[100px]">
+                <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={barData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} />
+                    <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 9 }} />
                     <YAxis tick={{ fill: '#64748b', fontSize: 9 }} />
                     <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="pass" name="Pass" stackId="a" fill="#10b981" radius={[0,0,0,0]} />
-                    <Bar dataKey="fail" name="Fail" stackId="a" fill="#ef4444" radius={[4,4,0,0]} />
+                    <Bar dataKey="pass" name="Pass" stackId="a" fill="#10b981" />
+                    <Bar dataKey="fail" name="Fail" stackId="a" fill="#ef4444" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
           </div>
         </GlassCard>
-      </div>
 
-      {/* Table */}
-      <GlassCard
-        borderColor="rgba(249, 115, 22, 0.25)"
-        glowColor="rgba(249, 115, 22, 0.08)"
-        padding="24px"
-        className="relative shadow-lg"
-      >
-        <SectionHeader title="BIST Test Results" />
-        <DataTable
-          headers={['Block ID', 'Type', 'Mode', 'Pass', 'Fail', 'Coverage', 'Duration', 'Tested At']}
-          rows={tableRows}
-        />
-      </GlassCard>
+        {/* Row 2 Left: Table */}
+        <GlassCard
+          borderColor="rgba(249, 115, 22, 0.25)"
+          glowColor="rgba(249, 115, 22, 0.08)"
+          padding="20px"
+          className="relative shadow-lg"
+        >
+          <div>
+            <SectionHeader title="BIST Test Results" subtitle="Log of BIST register sweeps" />
+            <div className="max-h-[260px] overflow-y-auto mt-2">
+              <DataTable
+                headers={['Block ID', 'Type', 'Mode', 'Pass', 'Fail', 'Coverage', 'Duration', 'Tested At']}
+                rows={tableRows}
+              />
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Row 2 Right: AI Findings & Insights Panel */}
+        <GlassCard
+          borderColor="rgba(249, 115, 22, 0.3)"
+          glowColor="rgba(249, 115, 22, 0.1)"
+          padding="20px"
+          className="relative shadow-lg flex flex-col justify-between"
+        >
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-orange-400 animate-pulse" />
+                <span>BIST AI Findings</span>
+              </h3>
+              <Badge color="amber">14 Failures</Badge>
+            </div>
+
+            <div className="space-y-2 text-xs select-none">
+              <div className="flex items-start gap-2.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
+                <p className="text-slate-355">
+                  <span className="font-semibold text-white">14 BIST failures</span> observed across LBIST logic gates and MBIST cell matrices.
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                <p className="text-slate-355">
+                  ABIST analog signal checks verified <span className="font-semibold text-white">100% pass</span> on active voltage rails.
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
+                <p className="text-slate-355">
+                  Total combined duration of BIST runs clocked at <span className="font-semibold text-white">{(totalDuration / 1000).toFixed(1)} seconds</span>.
+                </p>
+              </div>
+            </div>
+
+            <div className="border border-orange-500/20 bg-orange-500/5 p-3 rounded-lg text-xs space-y-1">
+              <span className="font-bold text-orange-400 uppercase tracking-wider">Test Compaction</span>
+              <p className="font-bold text-white text-[12px] mt-0.5">Compact overlapping MBIST registers</p>
+              <p className="text-slate-400 text-[10px] leading-normal">
+                Merging redundant test register sweeps on matching memory banks trims off { (totalDuration * 0.08).toFixed(0) }ms of unnecessary clock cycles.
+              </p>
+            </div>
+          </div>
+        </GlassCard>
+      </div>
     </div>
   );
 }
+

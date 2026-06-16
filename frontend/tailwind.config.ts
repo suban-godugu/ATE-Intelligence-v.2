@@ -12,11 +12,11 @@ const config: Config = {
       colors: {
         // Core background layers
         bg: {
-          primary:   "#080b14",
-          secondary: "#0d1220",
-          card:      "#111827",
-          hover:     "#1a2235",
-          elevated:  "#151e30",
+          primary:   "#0a0d1a",
+          secondary: "#0f1326",
+          card:      "#151c33",
+          hover:     "#243058",
+          elevated:  "#1d2644",
         },
         // Border tokens
         border: {
@@ -49,9 +49,9 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans:    ["'Times New Roman'", "Times", "Georgia", "serif"],
-        mono:    ["'Courier New'", "Courier", "monospace"],
-        display: ["'Times New Roman'", "Times", "Georgia", "serif"],
+        sans:    ["Inter", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
+        mono:    ["'Fira Code'", "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
+        display: ["Outfit", "sans-serif"],
         serif:   ["'Times New Roman'", "Times", "Georgia", "serif"],
       },
       backgroundImage: {

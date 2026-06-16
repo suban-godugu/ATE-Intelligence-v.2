@@ -73,16 +73,28 @@ export class WaferImageController {
     @Param('id') id: string,
     @Res() res: express.Response,
   ): Promise<express.Response> {
-    const record = await this.prisma.waferImage.findUnique({
-      where: { id },
-      select: { mimeType: true, imageType: true },
-    });
+    let record: any = null;
+    const isDbOnline = this.prisma.isOnline();
+    if (isDbOnline) {
+      try {
+        record = await this.prisma.waferImage.findUnique({
+          where: { id },
+          select: { mimeType: true, imageType: true },
+        });
+      } catch {}
+    }
+
+    if (!record) {
+      try {
+        record = await this.storageService.getImageMetaFromRedis(id);
+      } catch {}
+    }
 
     if (!record) {
       throw new NotFoundException(`Wafer image with ID "${id}" not found.`);
     }
 
-    // Retrieve binary image Buffer (resolves from Postgres bytea or streams from MinIO)
+    // Retrieve binary image Buffer (resolves from Postgres bytea, streams from MinIO, or fallback from Redis)
     const buffer = await this.storageService.getImageBuffer(id);
 
     const filename = `wafer-${id}-${record.imageType.toLowerCase()}.png`;
@@ -100,10 +112,22 @@ export class WaferImageController {
    */
   @Get(':id/url')
   async getAccessUrl(@Param('id') id: string) {
-    const record = await this.prisma.waferImage.findUnique({
-      where: { id },
-      select: { storageBackend: true },
-    });
+    let record: any = null;
+    const isDbOnline = this.prisma.isOnline();
+    if (isDbOnline) {
+      try {
+        record = await this.prisma.waferImage.findUnique({
+          where: { id },
+          select: { storageBackend: true },
+        });
+      } catch {}
+    }
+
+    if (!record) {
+      try {
+        record = await this.storageService.getImageMetaFromRedis(id);
+      } catch {}
+    }
 
     if (!record) {
       throw new NotFoundException(`Wafer image with ID "${id}" not found.`);

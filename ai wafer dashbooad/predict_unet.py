@@ -68,253 +68,98 @@ model.eval()
 print("\nU-Net Model Loaded Successfully.")
 
 # ==========================================
-# INPUT IMAGE
+# API FUNCTION FOR SEGMENTATION
 # ==========================================
+def predict_unet_api(image_input):
+    """
+    Runs U-Net segmentation on numpy array, image path, or PIL image.
+    Returns metrics (defect density, yield pct, risk level) and arrays.
+    """
+    if isinstance(image_input, np.ndarray):
+        image = image_input
+    elif isinstance(image_input, str):
+        image = cv2.imread(image_input)
+    else:
+        from PIL import Image as PILImage
+        if isinstance(image_input, PILImage.Image):
+            image = np.array(image_input.convert("RGB"))
+        else:
+            raise TypeError("predict_unet_api expects path, PIL image, or numpy array")
 
-image_path = input(
+    if image is None:
+        raise ValueError("Invalid image input.")
 
-    "\nEnter wafer image path: "
-)
+    original = cv2.resize(image, (224, 224))
+    image_rgb = cv2.cvtColor(original, cv2.COLOR_BGR2RGB)
+    image_norm = image_rgb.astype(np.float32) / 255.0
 
-# ==========================================
-# LOAD IMAGE
-# ==========================================
+    image_input_tensor = np.transpose(image_norm, (2, 0, 1))
+    image_input_tensor = torch.tensor(image_input_tensor, dtype=torch.float32).unsqueeze(0)
+    image_input_tensor = image_input_tensor.to(device)
 
-image = cv2.imread(image_path)
+    with torch.no_grad():
+        output = model(image_input_tensor)
+        output = torch.sigmoid(output)
 
-if image is None:
+    mask = output.squeeze().cpu().numpy()
+    binary_mask = np.zeros_like(mask)
+    binary_mask[mask > 0.5] = 1
+    binary_mask = (binary_mask * 255).astype(np.uint8)
 
-    raise ValueError(
-        "\nInvalid image path."
-    )
+    kernel = np.ones((3, 3), np.uint8)
+    binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, kernel)
 
-# ==========================================
-# RESIZE
-# ==========================================
+    contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    overlay = image_rgb.copy()
+    overlay[binary_mask > 0] = [255, 0, 0]
+    result = cv2.addWeighted(image_rgb, 0.65, overlay, 0.35, 0)
 
-original = cv2.resize(
-    image,
-    (224,224)
-)
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > 20:
+            cv2.drawContours(result, [contour], -1, (255, 255, 255), 1)
 
-image_rgb = cv2.cvtColor(
-    original,
-    cv2.COLOR_BGR2RGB
-)
+    defect_pixels = np.sum(binary_mask > 0)
+    total_pixels = 224 * 224
+    defect_density = (defect_pixels / total_pixels) * 100.0
+    yield_percentage = 100.0 - defect_density
 
-# ==========================================
-# NORMALIZATION
-# ==========================================
+    if defect_density > 50:
+        risk = "VERY HIGH"
+    elif defect_density > 25:
+        risk = "HIGH"
+    elif defect_density > 10:
+        risk = "MEDIUM"
+    else:
+        risk = "LOW"
 
-image_norm = image_rgb.astype(np.float32) / 255.0
-
-# ==========================================
-# CHANNEL FIRST
-# ==========================================
-
-image_input = np.transpose(
-    image_norm,
-    (2,0,1)
-)
-
-image_input = torch.tensor(
-    image_input,
-    dtype=torch.float32
-).unsqueeze(0)
-
-image_input = image_input.to(device)
-
-# ==========================================
-# PREDICTION
-# ==========================================
-
-with torch.no_grad():
-
-    output = model(image_input)
-
-    output = torch.sigmoid(output)
-
-# ==========================================
-# CONVERT TO MASK
-# ==========================================
-
-mask = output.squeeze().cpu().numpy()
-
-# ==========================================
-# THRESHOLD
-# ==========================================
-
-binary_mask = np.zeros_like(mask)
-
-binary_mask[mask > 0.5] = 1
+    return {
+        "defect_density": defect_density,
+        "yield_percentage": yield_percentage,
+        "risk_level": risk,
+        "defect_mask": binary_mask,
+        "overlay_rgb": result
+    }
 
 # ==========================================
-# REMOVE SMALL NOISE
+# TERMINAL TESTING
 # ==========================================
+if __name__ == "__main__":
+    image_path = input("\nEnter wafer image path: ")
+    res = predict_unet_api(image_path)
+    
+    print("\n" + "="*45)
+    print("           U-NET SEGMENTATION RESULT")
+    print("="*45)
+    print(f"DEFECT DENSITY  : {res['defect_density']:.2f}%")
+    print(f"ESTIMATED YIELD : {res['yield_percentage']:.2f}%")
+    print(f"RISK LEVEL      : {res['risk_level']}")
+    print("="*45 + "\n")
 
-binary_mask = (binary_mask * 255).astype(np.uint8)
-
-kernel = np.ones((3,3), np.uint8)
-
-binary_mask = cv2.morphologyEx(
-    binary_mask,
-    cv2.MORPH_OPEN,
-    kernel
-)
-
-# ==========================================
-# CONTOURS
-# ==========================================
-
-contours, _ = cv2.findContours(
-    binary_mask,
-    cv2.RETR_EXTERNAL,
-    cv2.CHAIN_APPROX_SIMPLE
-)
-
-# ==========================================
-# CREATE OVERLAY
-# ==========================================
-
-overlay = image_rgb.copy()
-
-# RED = DEFECTS
-
-overlay[
-    binary_mask > 0
-] = [255,0,0]
-
-# ==========================================
-# BLEND
-# ==========================================
-
-result = cv2.addWeighted(
-    image_rgb,
-    0.65,
-    overlay,
-    0.35,
-    0
-)
-
-# ==========================================
-# DRAW CONTOURS
-# ==========================================
-
-for contour in contours:
-
-    area = cv2.contourArea(contour)
-
-    if area > 20:
-
-        cv2.drawContours(
-            result,
-            [contour],
-            -1,
-            (255,255,255),
-            1
-        )
-
-# ==========================================
-# METRICS
-# ==========================================
-
-defect_pixels = np.sum(
-    binary_mask > 0
-)
-
-total_pixels = 224 * 224
-
-defect_density = (
-    defect_pixels / total_pixels
-) * 100
-
-yield_percentage = 100 - defect_density
-
-# ==========================================
-# RISK LEVEL
-# ==========================================
-
-if defect_density > 50:
-
-    risk = "VERY HIGH"
-
-elif defect_density > 25:
-
-    risk = "HIGH"
-
-elif defect_density > 10:
-
-    risk = "MEDIUM"
-
-else:
-
-    risk = "LOW"
-
-# ==========================================
-# DISPLAY
-# ==========================================
-
-plt.figure(figsize=(12,12))
-
-plt.imshow(result)
-
-plt.title(
-
-    "Industrial U-Net Segmentation",
-
-    fontsize=16,
-
-    fontweight='bold'
-)
-
-# ==========================================
-# METRICS PANEL
-# ==========================================
-
-plt.figtext(
-
-    0.72,
-    0.10,
-
-    f"Defect Density : {defect_density:.2f}%\n\n"
-    f"Estimated Yield : {yield_percentage:.2f}%\n\n"
-    f"Risk Level : {risk}",
-
-    fontsize=12,
-
-    color='white',
-
-    bbox=dict(
-        facecolor='black',
-        alpha=0.9,
-        edgecolor='white'
-    )
-)
-
-# ==========================================
-# LEGEND
-# ==========================================
-
-plt.figtext(
-
-    0.72,
-    0.03,
-
-    "RED : Defect Region",
-
-    fontsize=11,
-
-    color='white',
-
-    bbox=dict(
-        facecolor='black',
-        alpha=0.9,
-        edgecolor='white'
-    )
-)
-
-plt.axis('off')
-
-plt.tight_layout()
-
-plt.show()
+    plt.figure(figsize=(10, 10))
+    plt.imshow(res['overlay_rgb'])
+    plt.title("Industrial U-Net Segmentation", fontsize=16, fontweight='bold')
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()

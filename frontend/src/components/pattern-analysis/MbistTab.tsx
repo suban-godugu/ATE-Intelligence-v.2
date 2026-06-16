@@ -8,6 +8,8 @@ import { SectionHeader, Badge, CoverageBar, DataTable } from '@/components/ui/Ch
 import { GlassCard } from './SharedComponents';
 import { mbistData } from '@/lib/mockData';
 import { format } from 'date-fns';
+import { Sparkles } from 'lucide-react';
+
 
 const ALGO_COLORS: Record<string, string> = {
   'MARCH C-': '#3b82f6',
@@ -62,102 +64,131 @@ export default function MbistTab() {
   ]);
 
   return (
-    <div className="space-y-6 fade-in-up">
-      {/* KPI */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 select-none">
-        <StatCard title="Memory Instances" value={totalMemories} subtitle="Total tested" color="blue" />
-        <StatCard title="Failing Memories" value={failedMemories} subtitle={`${passRate}% pass rate`} color="red" />
-        <StatCard title="Pass Rate" value={`${passRate}%`} subtitle={`${totalMemories - failedMemories} memories`} color="green" />
-        <StatCard title="Avg Coverage" value={`${avgCoverage}%`} subtitle="All algorithms" color="cyan" />
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 items-stretch">
-        {/* Algorithm comparison */}
+    <div className="fade-in-up">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-stretch">
+        {/* Row 1 Left: Algorithm comparison */}
         <GlassCard
           borderColor="rgba(139, 92, 246, 0.25)" // Purple accent for MBIST
           glowColor="rgba(139, 92, 246, 0.08)"
-          padding="24px"
+          padding="20px"
           className="relative shadow-lg flex flex-col justify-between"
         >
           <div>
             <SectionHeader title="Results by Algorithm" subtitle="Pass/Fail breakdown per MBIST algorithm" />
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={algoBarData} margin={{ top: 5, right: 10, left: -15, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} />
-                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="pass" name="Pass" stackId="a" fill="#10b981" radius={[0,0,0,0]} />
-                <Bar dataKey="fail" name="Fail" stackId="a" fill="#ef4444" radius={[4,4,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="h-[220px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={algoBarData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} />
+                  <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="pass" name="Pass" stackId="a" fill="#10b981" />
+                  <Bar dataKey="fail" name="Fail" stackId="a" fill="#ef4444" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </GlassCard>
 
-        {/* Per-memory coverage */}
+        {/* Row 1 Right: Per-memory coverage */}
         <GlassCard
           borderColor="rgba(139, 92, 246, 0.25)"
           glowColor="rgba(139, 92, 246, 0.08)"
-          padding="24px"
+          padding="20px"
           className="relative shadow-lg flex flex-col justify-between"
         >
           <div>
             <SectionHeader title="Coverage per Memory Cell" subtitle="First 16 cells — red = fault detected" />
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={coverageBarData} margin={{ top: 5, right: 10, left: -15, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 9 }} />
-                <YAxis domain={[80, 100]} tick={{ fill: '#64748b', fontSize: 10 }} />
-                <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="coverage" name="Coverage %" radius={[3, 3, 0, 0]}>
-                  {coverageBarData.map((entry, i) => (
-                    <Cell key={i} fill={entry.failed ? '#ef4444' : ALGO_COLORS[entry.algo] || '#3b82f6'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="h-[220px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={coverageBarData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 10 }} />
+                  <YAxis domain={[80, 100]} tick={{ fill: '#64748b', fontSize: 10 }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Bar dataKey="coverage" name="Coverage %" radius={[3, 3, 0, 0]}>
+                    {coverageBarData.map((entry, i) => (
+                      <Cell key={i} fill={entry.failed ? '#ef4444' : ALGO_COLORS[entry.algo] || '#3b82f6'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Row 2 Left: Memory Cell Results Table */}
+        <GlassCard
+          borderColor="rgba(139, 92, 246, 0.25)"
+          glowColor="rgba(139, 92, 246, 0.08)"
+          padding="20px"
+          className="relative shadow-lg flex flex-col justify-between"
+        >
+          <div>
+            <SectionHeader title="Memory Cell Results" subtitle="Detailed block execution log" />
+            <div className="max-h-[260px] overflow-y-auto mt-2">
+              <DataTable
+                headers={['Cell ID', 'Algorithm', 'Array Size', 'Pass', 'Fail', 'Coverage', 'Tested At']}
+                rows={tableRows}
+              />
+            </div>
+          </div>
+        </GlassCard>
+
+        {/* Row 2 Right: AI Findings & Insights Panel */}
+        <GlassCard
+          borderColor="rgba(139, 92, 246, 0.3)"
+          glowColor="rgba(139, 92, 246, 0.1)"
+          padding="20px"
+          className="relative shadow-lg flex flex-col justify-between"
+        >
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles className="h-4 w-4 text-purple-400 animate-pulse" />
+                <span>AI Diagnostics Findings</span>
+              </h3>
+              <Badge color="red">9 Failed Blocks</Badge>
+            </div>
+
+            <div className="space-y-2 text-xs select-none">
+              <div className="flex items-start gap-2.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
+                <p className="text-slate-300">
+                  <span className="font-semibold text-white">9 failing memory blocks</span> detected on SRAM banks.
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                <p className="text-slate-300">
+                  <span className="font-semibold text-white">March C-</span> produces the highest average coverage ({avgCoverage}%).
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0" />
+                <p className="text-slate-300">
+                  <span className="font-semibold text-white">3 memory cells</span> (M2, M5, M14) are repeatedly failing wordline triggers.
+                </p>
+              </div>
+              <div className="flex items-start gap-2.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-purple-400 mt-1.5 shrink-0" />
+                <p className="text-slate-300">
+                  Spare column and local redundancy usage reaching <span className="font-semibold text-white">82%</span> capacity.
+                </p>
+              </div>
+            </div>
+
+            <div className="border border-purple-500/20 bg-purple-500/5 p-3 rounded-lg text-xs space-y-1">
+              <span className="font-bold text-purple-400 uppercase tracking-wider">Recommendation</span>
+              <p className="font-bold text-white text-[12px] mt-0.5">Switch to MATS++</p>
+              <p className="text-slate-400 text-[10px] leading-normal">
+                Transitioning active testing sequences to MATS++ recovers timing margin and removes address decoding overhead, saving approximately 14% test execution time.
+              </p>
+            </div>
           </div>
         </GlassCard>
       </div>
-
-      {/* Algorithm Detail Cards */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 select-none">
-        {byAlgorithm.map((a) => (
-          <GlassCard
-            key={a.algorithm}
-            borderColor="rgba(139, 92, 246, 0.2)"
-            glowColor="rgba(139, 92, 246, 0.04)"
-            padding="20px"
-            className="relative shadow-md"
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <h4 className="font-bold text-slate-200" style={{ color: ALGO_COLORS[a.algorithm] }}>{a.algorithm}</h4>
-              <Badge color={a.avgCoverage >= 95 ? 'green' : 'amber'}>{a.instanceCount} cells</Badge>
-            </div>
-            <div className="space-y-2.5 text-sm">
-              <div className="flex justify-between"><span className="text-slate-500 font-medium">Pass</span><span className="font-mono font-bold text-emerald-450">{a.totalPass}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500 font-medium">Fail</span><span className="font-mono font-bold text-red-405">{a.totalFail}</span></div>
-              <div className="mt-4">
-                <CoverageBar label="Avg Coverage" value={a.avgCoverage} target={95} color={ALGO_COLORS[a.algorithm]} />
-              </div>
-            </div>
-          </GlassCard>
-        ))}
-      </div>
-
-      {/* Table */}
-      <GlassCard
-        borderColor="rgba(139, 92, 246, 0.25)"
-        glowColor="rgba(139, 92, 246, 0.08)"
-        padding="24px"
-        className="relative shadow-lg"
-      >
-        <SectionHeader title="Memory Cell Results" />
-        <DataTable
-          headers={['Cell ID', 'Algorithm', 'Array Size', 'Pass', 'Fail', 'Coverage', 'Tested At']}
-          rows={tableRows}
-        />
-      </GlassCard>
     </div>
   );
 }
+

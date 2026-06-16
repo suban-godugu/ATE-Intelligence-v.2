@@ -11,6 +11,7 @@ import { SectionHeader, Badge, CoverageBar, DataTable } from '@/components/ui/Ch
 import { GlassCard } from './SharedComponents';
 import { redundancyData } from '@/lib/mockData';
 import { TabEmptyState } from './TabEmptyState';
+import { cn } from '@/lib/utils';
 
 const TYPE_COLORS: Record<string, string> = {
   COLUMN: '#3b82f6',
@@ -38,17 +39,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export function RedundancyTabSkeleton() {
   return (
     <div className="space-y-6 animate-pulse select-none">
-      {/* KPI Stat Cards */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="rounded-xl border border-slate-800/80 bg-slate-900/20 p-5 space-y-2">
-            <div className="h-3 w-20 bg-slate-850 rounded" />
-            <div className="h-7 w-28 bg-slate-800 rounded" />
-            <div className="h-3 w-24 bg-slate-850 rounded" />
-          </div>
-        ))}
-      </div>
-
       {/* Two Column Charts Grid */}
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         {[...Array(2)].map((_, i) => (
@@ -58,16 +48,6 @@ export function RedundancyTabSkeleton() {
               <div className="h-3 w-56 bg-slate-850 rounded" />
             </div>
             <div className="h-[240px] bg-slate-950/30 rounded-lg border border-slate-850/20" />
-          </div>
-        ))}
-      </div>
-
-      {/* 6 detailed spare card columns */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        {[...Array(6)].map((_, i) => (
-          <div key={i} className="rounded-xl border border-slate-850/60 bg-slate-900/10 p-4 flex flex-col items-center space-y-2">
-            <div className="h-4 w-12 bg-slate-800 rounded" />
-            <div className="h-3.5 w-20 bg-slate-850 rounded" />
           </div>
         ))}
       </div>
@@ -143,10 +123,10 @@ export default function RedundancyTab() {
     <div className="space-y-6 fade-in-up">
       {/* KPI */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 select-none">
-        <StatCard title="Total Elements" value={total} subtitle="Redundancy cells" color="blue" />
+        <StatCard title="Total Spares" value={total} subtitle="Redundancy elements" color="blue" />
         <StatCard title="Repaired" value={repaired} subtitle={`${utilizationPct}% utilized`} color="green" />
-        <StatCard title="Available" value={available} subtitle="Unused spares" color="cyan" />
-        <StatCard title="Depleted" value={depleted} subtitle="No more spares" color="red" />
+        <StatCard title="Available" value={available} subtitle="Unused Spares" color="cyan" />
+        <StatCard title="Depleted" value={depleted} subtitle="Exhausted blocks" color="red" />
       </div>
 
       {filteredElements.length === 0 ? (
@@ -158,35 +138,104 @@ export default function RedundancyTab() {
             <GlassCard
               borderColor="rgba(236, 72, 153, 0.25)" // Pink accent for Redundancy
               glowColor="rgba(236, 72, 153, 0.08)"
-              padding="24px"
+              padding="20px"
               className="relative shadow-lg flex flex-col justify-between"
             >
               <div>
                 <SectionHeader title="Redundancy by Type" subtitle="Repaired | Available | Depleted" />
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={barData} margin={{ top: 5, right: 10, left: -15, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} />
-                    <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="repaired"  name="Repaired"  stackId="a" fill="#10b981" radius={[0,0,0,0]} />
-                    <Bar dataKey="available" name="Available" stackId="a" fill="#3b82f6" radius={[0,0,0,0]} />
-                    <Bar dataKey="depleted"  name="Depleted"  stackId="a" fill="#ef4444" radius={[4,4,0,0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                <div className="h-[220px] w-full mt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={barData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="name" tick={{ fill: '#64748b', fontSize: 11 }} />
+                      <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Bar dataKey="repaired"  name="Repaired"  stackId="a" fill="#10b981" />
+                      <Bar dataKey="available" name="Available" stackId="a" fill="#3b82f6" />
+                      <Bar dataKey="depleted"  name="Depleted"  stackId="a" fill="#ef4444" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             </GlassCard>
 
-            {/* Utilization */}
+            {/* Wafer Repair Heatmap Map Visualizer */}
             <GlassCard
               borderColor="rgba(236, 72, 153, 0.25)"
               glowColor="rgba(236, 72, 153, 0.08)"
-              padding="24px"
+              padding="20px"
               className="relative shadow-lg flex flex-col justify-between"
             >
               <div>
-                <SectionHeader title="Utilization Rate by Type" subtitle="% of redundancy elements used for repairs" />
-                <div className="space-y-4 pt-2">
+                <SectionHeader title="Silicon Wafer Repair Heatmap" subtitle="Active lot spatial repair status" />
+                <div className="flex flex-col items-center justify-center pt-2">
+                  {/* Wafer Circle layout */}
+                  <div className="relative w-44 h-44 rounded-full border border-slate-800 bg-slate-950/60 flex items-center justify-center p-2 shadow-inner">
+                    {/* Notch notch notch */}
+                    <div className="absolute bottom-0 left-[45%] right-[45%] h-1 bg-slate-800" />
+                    
+                    {/* 10x10 coordinates */}
+                    <div className="grid grid-cols-10 gap-0.5 w-[120px] h-[120px]">
+                      {Array.from({ length: 100 }).map((_, i) => {
+                        const x = i % 10;
+                        const y = Math.floor(i / 10);
+                        // Check if inside circle
+                        const isInside = Math.sqrt((x - 4.5)**2 + (y - 4.5)**2) <= 4.5;
+                        if (!isInside) return <div key={i} className="w-2.5 h-2.5 bg-transparent" />;
+                        
+                        const hash = (x * 17 + y * 23) % 100;
+                        let bgColor = 'bg-emerald-500/80';
+                        let label = 'Repaired';
+                        if (hash > 85) {
+                          bgColor = 'bg-red-500/90';
+                          label = 'Unrepaired';
+                        } else if (hash > 70) {
+                          bgColor = 'bg-amber-400/95';
+                          label = 'Spare Used';
+                        }
+                        
+                        return (
+                          <div
+                            key={i}
+                            className={cn("w-2.5 h-2.5 rounded-sm transition duration-150 cursor-pointer hover:scale-125 hover:z-10", bgColor)}
+                            title={`Coordinate: (${x}, ${y}) | Status: ${label}`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Heatmap Legend */}
+                  <div className="flex items-center gap-4 text-[9px] text-slate-500 mt-3.5 font-mono select-none">
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded bg-emerald-500/80 block" />
+                      <span>Repaired</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded bg-amber-400/95 block" />
+                      <span>Spare Used</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded bg-red-500/90 block" />
+                      <span>Unrepaired</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 items-stretch">
+            {/* Utilization Rate */}
+            <GlassCard
+              borderColor="rgba(236, 72, 153, 0.25)"
+              glowColor="rgba(236, 72, 153, 0.08)"
+              padding="20px"
+              className="relative shadow-lg xl:col-span-1"
+            >
+              <div>
+                <SectionHeader title="Utilization Rate by Type" subtitle="% of redundancy used" />
+                <div className="space-y-3 pt-2">
                   {byType.map((t) => (
                     <div key={t.redundancyType} className="space-y-1 select-none">
                       <CoverageBar
@@ -201,31 +250,35 @@ export default function RedundancyTab() {
                 </div>
               </div>
             </GlassCard>
-          </div>
 
-          {/* Summary Grid */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6 select-none">
-            {byType.map((t) => (
-              <GlassCard
-                key={t.redundancyType}
-                borderColor="rgba(236, 72, 153, 0.2)"
-                glowColor="rgba(236, 72, 153, 0.04)"
-                padding="16px"
-                className="relative text-center shadow-md hover:scale-[1.03] transition-all"
-              >
-                <div className="mb-2 h-1 w-full rounded-full" style={{ background: TYPE_COLORS[t.redundancyType] }} />
-                <p className="text-lg font-bold text-white font-mono">{t.total}</p>
-                <p className="text-xs font-bold uppercase tracking-wider font-mono leading-none my-1.5" style={{ color: TYPE_COLORS[t.redundancyType] }}>{t.redundancyType}</p>
-                <div className="mt-2.5 space-y-1 text-xs">
-                  <p className="text-emerald-450 font-bold">{t.repaired} Repaired</p>
-                  <p className="text-blue-400 font-bold">{t.available} Spare</p>
-                </div>
-                <p className="mt-2 text-[10px] font-mono text-slate-500 font-bold">{t.utilizationPct}% Used</p>
-              </GlassCard>
-            ))}
+            {/* Summary Grid of elements */}
+            <div className="xl:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {byType.map((t) => (
+                <GlassCard
+                  key={t.redundancyType}
+                  borderColor="rgba(236, 72, 153, 0.2)"
+                  glowColor="rgba(236, 72, 153, 0.04)"
+                  padding="14px"
+                  className="relative text-center shadow-md hover:scale-[1.02] transition-all flex flex-col justify-between"
+                >
+                  <div className="mb-2 h-1 w-full rounded-full" style={{ background: TYPE_COLORS[t.redundancyType] }} />
+                  <div>
+                    <p className="text-lg font-bold text-white font-mono">{t.total}</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider font-mono leading-none my-1.5" style={{ color: TYPE_COLORS[t.redundancyType] }}>{t.redundancyType}</p>
+                  </div>
+                  <div className="mt-2.5 space-y-1 text-[11px]">
+                    <p className="text-emerald-450 font-bold">{t.repaired} Repaired</p>
+                    <p className="text-blue-400 font-bold">{t.available} Spare</p>
+                  </div>
+                  <p className="mt-2 text-[9px] font-mono text-slate-500 font-bold">{t.utilizationPct}% Used</p>
+                </GlassCard>
+              ))}
+            </div>
           </div>
         </>
       )}
+
+
 
       {/* Table with search */}
       <GlassCard

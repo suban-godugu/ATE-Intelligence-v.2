@@ -1,7 +1,9 @@
 'use client';
 
+import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useDashboard } from '@/context/DashboardContext';
+import CommandPalette from './CommandPalette';
 import {
   IconRefreshCw,
   IconBell,
@@ -24,6 +26,7 @@ export function Topbar({
 }: TopbarProps) {
   const { state, unreadAlertCount } = useDashboard();
   const { lastUpdatedAt, autoRefresh } = state;
+  const [isCommandBarOpen, setIsCommandBarOpen] = useState(false);
 
   return (
     <header
@@ -78,6 +81,7 @@ export function Topbar({
       <div className="flex-1 flex justify-center">
         <button
           id="topbar-search"
+          onClick={() => setIsCommandBarOpen(true)}
           className={cn(
             'group flex w-full max-w-sm items-center gap-2 rounded-xl px-3 py-1.5 text-[11px]',
             'border border-[var(--border)] bg-[var(--bg-elevated)]/60',
@@ -183,6 +187,8 @@ export function Topbar({
           <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full border-2 border-[var(--bg-secondary)] bg-[var(--accent-green)]" />
         </div>
       </div>
+      <CommandPalette isOpen={isCommandBarOpen} onClose={() => setIsCommandBarOpen(false)} />
     </header>
   );
 }
+

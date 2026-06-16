@@ -969,7 +969,7 @@ export default function ReportsPage() {
                       { method: 'GET', url: '/api/reports/history', desc: 'Exposes delivery success statistics and paginated run registers. Redis (1m TTL).' },
                       { method: 'POST', url: '/api/reports/history/:runId/retry', desc: 'Re-triggers execution parameters for failed historical configurations.' }
                     ].map((api, idx) => (
-                      <div key={idx} style={{ background: 'var(--bg-input, #0F1A2A)', padding: '5px', borderRadius: '4px', border: '0.5px solid var(--border)' }}>
+                      <div key={idx} style={{ background: 'var(--bg-input, #12182c)', padding: '5px', borderRadius: '4px', border: '0.5px solid var(--border)' }}>
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <span style={{
                             color: api.method === 'GET' ? '#10B981' : api.method === 'POST' ? '#F59E0B' : '#EF4444',
@@ -991,7 +991,7 @@ export default function ReportsPage() {
                     <h4 style={{ fontSize: '11px', fontWeight: 600, marginBottom: '4px', color: 'var(--accent-purple)' }} className="flex items-center gap-1">
                       Async Generation Pipeline (3 Stages)
                     </h4>
-                    <div style={{ background: 'var(--bg-input, #0F1A2A)', padding: '8px', borderRadius: 'var(--radius-md)', border: '0.5px solid var(--border)', lineHeight: '1.35' }}>
+                    <div style={{ background: 'var(--bg-input, #12182c)', padding: '8px', borderRadius: 'var(--radius-md)', border: '0.5px solid var(--border)', lineHeight: '1.35' }}>
                       <div style={{ marginBottom: '4px' }}>
                         <strong>Stage 1: Data Aggregation</strong><br />
                         Queries sub-services (`/patterns`, `/cost`, `/equipment`) to construct a unified telemetry context block.
@@ -1011,7 +1011,7 @@ export default function ReportsPage() {
                     <h4 style={{ fontSize: '11px', fontWeight: 600, marginBottom: '4px', color: 'var(--accent-purple)' }} className="flex items-center gap-1">
                       BullMQ Scheduling Engine
                     </h4>
-                    <div style={{ background: 'var(--bg-input, #0F1A2A)', padding: '8px', borderRadius: 'var(--radius-md)', border: '0.5px solid var(--border)', fontFamily: 'monospace', fontSize: '9px', lineHeight: '1.4' }}>
+                    <div style={{ background: 'var(--bg-input, #12182c)', padding: '8px', borderRadius: 'var(--radius-md)', border: '0.5px solid var(--border)', fontFamily: 'monospace', fontSize: '9px', lineHeight: '1.4' }}>
                       Robust scheduled triggers utilize Redis backed **BullMQ** for absolute delivery guarantee.<br />
                       Automatic failure retries: up to 3 attempts with exponential backoff (1min, 5min, 15min) before reporting failures to platform channels.
                     </div>

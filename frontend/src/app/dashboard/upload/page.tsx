@@ -1,188 +1,253 @@
 'use client';
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Upload, Brain, Check, AlertTriangle, X, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import { Upload, Brain, Check, AlertTriangle, X, ChevronDown, ChevronUp, Trash2, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useDashboard } from '@/context/DashboardContext';
 import apiClient from '@/api/client';
-import { uploadProgressUrl } from '@/api/config';
 import { toast } from '@/hooks/useToast';
 import { useWaferAi } from '@/hooks/useWaferAi';
-import { DEFECT_COLORS, LOT_MAPPING } from '@/api/waferAi';
+import { DEFECT_COLORS } from '@/api/waferAi';
 import { cn } from '@/lib/utils';
 
-interface FileUploadState {
-  file: File | null;
-  status: 'idle' | 'uploading' | 'success' | 'error';
+// ── Types ──────────────────────────────────────────────────────────────────
+interface ColumnStat {
+  name: string;
+  dtype: string;
+  null_pct: number;
+  unique_count: number;
+  sample_values: any[];
+}
+
+interface ValidationIssue {
+  severity: 'error' | 'warning' | 'info';
+  code: string;
   message: string;
 }
 
-interface ProgressEvent {
-  stage: string;
-  message: string;
+interface ValidationReport {
+  validation_id: string;
   timestamp: string;
-  data?: any;
+  filename: string;
+  file_size_bytes: number;
+  file_category: string;
+  data_type: 'structured' | 'unstructured' | 'mixed' | 'unknown';
+  status: 'VALID' | 'INVALID' | 'WARNING';
+  confidence_score: number;
+  row_count?: number;
+  column_count?: number;
+  column_stats?: ColumnStat[];
+  issues: ValidationIssue[];
+  recommended_pipeline: string;
+  metadata: Record<string, any>;
 }
 
-// ─── Upload Card ─────────────────────────────────────────────────
-interface UploadCardProps {
-  title: string;
-  description: string;
-  extension: string;
-  iconColor: string;
-  onFileSelect: (file: File | null) => void;
-  selectedFile: File | null;
+interface HistoryItem {
+  id: string;
+  validationId: string;
+  filename: string;
+  fileCategory: string;
+  dataType: string;
+  status: 'VALID' | 'INVALID' | 'WARNING';
+  confidenceScore: number;
+  issueCount: number;
+  createdAt: string;
 }
 
-const UploadCard: React.FC<UploadCardProps> = ({
-  title,
-  description,
-  extension,
-  iconColor,
+interface CardState {
+  file: File | null;
+  status: 'idle' | 'validating' | 'success' | 'error';
+  error: string | null;
+  report: ValidationReport | null;
+}
+
+const CARD_CONFIGS = {
+  STIL: {
+    title: 'STIL',
+    description: 'Scan Pattern Definition',
+    extension: 'Supported: .stil',
+    iconColor: 'var(--accent-green)',
+    accept: '.stil',
+  },
+  ATE_LOG: {
+    title: 'ATE LOG',
+    description: 'Tester execution results',
+    extension: 'Supported: .log, .csv',
+    iconColor: 'var(--accent-blue)',
+    accept: '.log,.csv',
+  },
+  ATPG_REPORT: {
+    title: 'ATPG REPORT',
+    description: 'Coverage and fault diagnostics',
+    extension: 'Supported: .rpt',
+    iconColor: 'var(--accent-purple)',
+    accept: '.rpt',
+  },
+  MBIST_REPORT: {
+    title: 'MBIST REPORT',
+    description: 'Memory test diagnostics',
+    extension: 'Supported: .rpt, .xml',
+    iconColor: 'var(--accent-blue)',
+    accept: '.rpt,.xml',
+  },
+  LBIST_REPORT: {
+    title: 'LBIST REPORT',
+    description: 'Logic self-test diagnostics',
+    extension: 'Supported: .rpt, .xml',
+    iconColor: 'var(--accent-cyan)',
+    accept: '.rpt,.xml',
+  },
+};
+
+// ── Validation Card Component ─────────────────────────────────────────────
+const ValidationCard = ({
+  type,
+  config,
+  cardState,
+  isActive,
   onFileSelect,
-  selectedFile,
+  onClear,
+  onCardClick,
+}: {
+  type: string;
+  config: typeof CARD_CONFIGS[keyof typeof CARD_CONFIGS];
+  cardState: CardState;
+  isActive: boolean;
+  onFileSelect: (file: File) => void;
+  onClear: () => void;
+  onCardClick: () => void;
 }) => {
   const [dragOver, setDragOver] = useState(false);
-  const inputRef = React.useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragOver(false);
     const file = e.dataTransfer.files?.[0];
     if (file) onFileSelect(file);
   };
 
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') setDragOver(true);
+    else if (e.type === 'dragleave') setDragOver(false);
+  };
+
+  const handleCardClick = () => {
+    if (cardState.file) {
+      onCardClick();
+    } else if (cardState.status !== 'validating') {
+      inputRef.current?.click();
+    }
+  };
+
+  let borderClass = 'border-[var(--border)] bg-[var(--bg-card)]/50 backdrop-blur-sm hover:border-[var(--border-bright)] hover:bg-[var(--bg-hover)]/40 hover:-translate-y-0.5 transition-all duration-200';
+  if (isActive) {
+    borderClass = 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5 ring-1 ring-[var(--accent-blue)]/50 shadow-[0_0_20px_rgba(59,130,246,0.15)]';
+  } else if (cardState.status === 'validating') {
+    borderClass = 'border-[var(--accent-blue)]/50 bg-[var(--accent-blue)]/5 border-pulse';
+  } else if (cardState.status === 'success' && cardState.report) {
+    borderClass = cardState.report.status === 'VALID'
+      ? 'border-[var(--accent-green)]/60 bg-[rgba(16,185,129,0.02)]'
+      : cardState.report.status === 'WARNING'
+        ? 'border-[var(--accent-amber)]/60 bg-[rgba(245,158,11,0.02)]'
+        : 'border-[var(--accent-red)]/60 bg-[rgba(239,68,68,0.02)]';
+  } else if (cardState.status === 'error') {
+    borderClass = 'border-[var(--accent-red)]/60 bg-[rgba(239,68,68,0.02)]';
+  } else if (dragOver) {
+    borderClass = 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5 scale-[0.99]';
+  }
+
   return (
     <div
-      className={`
-        relative group rounded-[var(--radius-xl)] border-2 transition-all duration-300 p-6 flex flex-col items-center text-center gap-3 cursor-pointer
-        ${selectedFile
-          ? 'border-[var(--accent-green)]/80 bg-[rgba(16,185,129,0.03)] backdrop-blur-md shadow-[0_0_25px_rgba(16,185,129,0.08)]'
-          : dragOver
-            ? 'border-[var(--accent-blue)] bg-[rgba(108,99,255,0.05)] backdrop-blur-md shadow-[0_0_25px_rgba(108,99,255,0.08)]'
-            : 'border-[var(--border)]/80 bg-[var(--bg-card)]/50 backdrop-blur-sm hover:border-[var(--border-bright)] hover:bg-[var(--bg-hover)]/60 hover:shadow-[0_8px_30px_rgba(0,0,0,0.2)] hover:-translate-y-0.5'
-        }
-      `}
-      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
+      onClick={handleCardClick}
+      onDragOver={handleDrag}
+      onDragEnter={handleDrag}
+      onDragLeave={handleDrag}
       onDrop={handleDrop}
-      onClick={() => inputRef.current?.click()}
+      className={`relative rounded-xl border p-4 flex flex-col items-center text-center gap-1.5 cursor-pointer transition-all ${borderClass}`}
     >
-      {/* Icon zone */}
-      <div
-        className={`text-[9px] font-bold font-mono px-2 py-0.5 rounded border transition-colors ${selectedFile ? 'border-[var(--accent-green)]/40 text-[var(--accent-green)] bg-[var(--accent-green)]/10' : 'border-[var(--border)] text-[var(--tx-muted)] bg-white/[0.02] group-hover:bg-white/[0.04]'}`}
-      >
-        {selectedFile ? 'READY' : 'STIL / LOG'}
+      <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+        {cardState.status === 'success' && cardState.report && (
+          <span className={`text-[8.5px] font-bold px-1.5 py-0.5 rounded font-mono border leading-none ${
+            cardState.report.status === 'VALID' ? 'bg-[var(--accent-green)]/10 text-[var(--accent-green)] border-[var(--accent-green)]/20' :
+            cardState.report.status === 'WARNING' ? 'bg-[var(--accent-amber)]/10 text-[var(--accent-amber)] border-[var(--accent-amber)]/20' :
+            'bg-[var(--accent-red)]/10 text-[var(--accent-red)] border-[var(--accent-red)]/20'
+          }`}>
+            {cardState.report.status}
+          </span>
+        )}
+        {cardState.file && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onClear();
+            }}
+            className="text-[var(--tx-muted)] hover:text-[var(--accent-red)] transition-colors p-1"
+            title="Remove File"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
-      {/* Labels */}
-      <div className="space-y-0.5">
-        <h3 className="text-[13px] font-bold text-[var(--tx-primary)]">{title}</h3>
-        <p className="text-[11px] text-[var(--tx-secondary)] leading-relaxed">{description}</p>
-        <span
-          className="inline-block mt-1 text-[9px] font-bold px-2 py-0.5 rounded font-mono"
-          style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--tx-muted)', border: '1px solid var(--border)' }}
+      <div className="flex items-center gap-1.5">
+        <h4 className="text-[12px] font-bold text-[var(--tx-primary)]">
+          {config.title}
+        </h4>
+        {cardState.status === 'validating' && (
+          <Loader2 className="w-3 h-3 animate-spin text-[var(--accent-blue)]" />
+        )}
+      </div>
+
+      <p className="text-[10px] text-[var(--tx-secondary)] leading-tight px-1 font-medium">
+        {config.description}
+      </p>
+
+      <p className="text-[9px] font-mono text-[var(--tx-muted)]">
+        {config.extension}
+      </p>
+
+      {cardState.file ? (
+        <div 
+          className="mt-1 flex items-center gap-1.5 px-2.5 py-1 rounded bg-[rgba(255,255,255,0.03)] border border-[var(--border)] max-w-[180px] w-full"
+          onClick={(e) => e.stopPropagation()}
         >
-          {extension}
-        </span>
-      </div>
-
-      {/* Drop zone hint */}
-      {!selectedFile && (
-        <p className="text-[10px] text-[var(--tx-muted)] mt-1">
-          Click to browse or drag & drop
+          <span className="text-[9px] text-[var(--accent-green)]">●</span>
+          <span className="text-[9px] text-[var(--tx-primary)] truncate font-mono flex-1 text-center" title={cardState.file.name}>
+            {cardState.file.name}
+          </span>
+        </div>
+      ) : (
+        <p className="text-[9.5px] text-[var(--tx-muted)] font-semibold mt-1">
+          Drag & Drop or Browse Files
         </p>
       )}
 
-      {/* Selected file pill */}
-      {selectedFile && (
-        <div
-          className="flex items-center gap-2 px-3 py-1.5 rounded-full w-full max-w-[200px] justify-between"
-          style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)' }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span className="text-[10px] text-[var(--accent-green)] font-bold font-mono select-none">●</span>
-          <span
-            className="text-[10px] text-[var(--accent-green)] font-semibold truncate flex-1 text-left"
-            title={selectedFile.name}
-          >
-            {selectedFile.name}
-          </span>
-          <button
-            className="text-[var(--tx-muted)] hover:text-[var(--accent-red)] font-bold text-[10px] font-mono transition-colors shrink-0"
-            onClick={(e) => { e.stopPropagation(); onFileSelect(null); }}
-            aria-label="Remove file"
-          >
-            [X]
-          </button>
-        </div>
+      {cardState.error && (
+        <p className="text-[8px] text-[var(--accent-red)] font-semibold w-full truncate leading-none mt-1">
+          {cardState.error}
+        </p>
       )}
 
       <input
         ref={inputRef}
         type="file"
         className="hidden"
-        onChange={(e) => onFileSelect(e.target.files?.[0] || null)}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onFileSelect(file);
+        }}
+        accept={config.accept}
       />
     </div>
   );
 };
 
-// ─── Progress Step ───────────────────────────────────────────────
-const ProgressStep = ({ event, index, total }: { event: ProgressEvent; index: number; total: number }) => {
-  const isError    = event.stage === 'Error';
-  const isComplete = event.stage === 'Complete';
-  const isActive   = index === total - 1;
-
-  return (
-    <div className="flex items-start gap-3 animate-fade-in">
-      {/* Timeline connector */}
-      <div className="flex flex-col items-center shrink-0 h-full min-h-[48px]">
-        <div
-          className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 font-mono text-[9px] font-bold transition-colors ${
-            isError    ? 'border-[var(--accent-red)] bg-[rgba(239,68,68,0.1)] text-[var(--accent-red)]' :
-            isComplete ? 'border-[var(--accent-green)] bg-[rgba(16,185,129,0.1)] text-[var(--accent-green)]' :
-            isActive   ? 'border-[var(--accent-blue)] bg-[rgba(108,99,255,0.1)] text-[var(--accent-blue)]' :
-                         'border-[var(--accent-green)]/40 bg-[rgba(16,185,129,0.04)] text-[var(--accent-green)]/70'
-          }`}
-        >
-          {isError    ? '!' :
-           isComplete ? '✓' :
-           isActive   ? '•' :
-                        '✓'
-          }
-        </div>
-        {index < total - 1 && (
-          <div className="w-px flex-1 bg-[var(--border)] mt-1 min-h-[16px]" />
-        )}
-      </div>
-
-      <div className="pt-1 pb-3 flex-1 min-w-0">
-        <p className="text-[13px] text-[var(--tx-primary)] font-medium leading-snug whitespace-pre-line">{event.message}</p>
-        <div className="flex items-center gap-2 mt-1">
-          <span
-            className="text-[9px] font-mono px-1.5 py-0.5 rounded"
-            style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--tx-muted)', border: '1px solid var(--border)' }}
-          >
-            {new Date(event.timestamp).toLocaleTimeString('en-US', { hour12: false })}
-          </span>
-          <span
-            className={`text-[9px] font-bold uppercase tracking-wider ${
-              isError    ? 'text-[var(--accent-red)]' :
-              isComplete ? 'text-[var(--accent-green)]' :
-                           'text-[var(--accent-blue)]'
-            }`}
-          >
-            {event.stage}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ─── Wafer Image Drop Zone (mini) ────────────────────────────────
+// ─── Wafer Drop Zone Component ─────────────────────────────────────────────
 interface WaferDropZoneProps {
   onFiles: (files: File[]) => void;
   predicting: boolean;
@@ -205,10 +270,10 @@ const WaferDropZone: React.FC<WaferDropZoneProps> = ({ onFiles, predicting }) =>
       onDrop={e => { e.preventDefault(); setDragging(false); handle(e.dataTransfer.files); }}
       onClick={() => !predicting && inputRef.current?.click()}
       className={cn(
-        'relative flex flex-col items-center justify-center gap-4 rounded-[var(--radius-2xl)] border-2 border-dashed p-10 cursor-pointer transition-all duration-300 shadow-md',
+        'relative flex flex-col items-center justify-center gap-3 rounded-[var(--radius-xl)] border-2 border-dashed p-8 cursor-pointer transition-all duration-300 shadow-sm',
         dragging
-          ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 scale-[1.01] shadow-[0_0_30px_rgba(168,85,247,0.15)]'
-          : 'border-[var(--border)] bg-[var(--bg-card)]/30 backdrop-blur-sm hover:border-[var(--accent-purple)]/50 hover:bg-[var(--bg-hover)]/40 hover:shadow-[0_8px_32px_rgba(0,0,0,0.15)] hover:-translate-y-0.5',
+          ? 'border-[var(--accent-purple)] bg-[var(--accent-purple)]/10 scale-[1.01]'
+          : 'border-[var(--border)] bg-[var(--bg-card)]/30 backdrop-blur-sm hover:border-[var(--accent-purple)]/50 hover:bg-[var(--bg-hover)]/40',
         predicting && 'cursor-not-allowed opacity-50 pointer-events-none',
       )}
     >
@@ -217,62 +282,178 @@ const WaferDropZone: React.FC<WaferDropZoneProps> = ({ onFiles, predicting }) =>
 
       {predicting ? (
         <>
-          <div className="h-10 w-10 rounded-full border-2 border-[var(--accent-purple)] border-t-transparent animate-spin" />
-          <p className="text-sm font-semibold text-[var(--accent-purple)]">Classifying wafer…</p>
-          <p className="text-[11px] text-[var(--tx-muted)]">ResNet50 AI model running</p>
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent-purple)]" />
+          <p className="text-xs font-semibold text-[var(--accent-purple)]">Classifying wafer…</p>
+          <p className="text-[10px] text-[var(--tx-muted)]">AI Classification running</p>
         </>
       ) : (
         <>
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-purple)]/15 border border-[var(--accent-purple)]/30">
-            <Upload className="h-5 w-5 text-[var(--accent-purple)]" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-purple)]/10 border border-[var(--accent-purple)]/20">
+            <Upload className="h-4 w-4 text-[var(--accent-purple)]" />
           </div>
           <div className="text-center">
-            <p className="text-sm font-semibold text-[var(--tx-primary)]">Drop wafer images here</p>
-            <p className="text-[11px] text-[var(--tx-muted)] mt-1">PNG · JPG · JPEG · Multi-file supported</p>
+            <p className="text-xs font-bold text-[var(--tx-primary)]">Upload Wafer Maps</p>
+            <p className="text-[10px] text-[var(--tx-muted)] mt-0.5">PNG • JPG • JPEG</p>
           </div>
-          <span className="rounded-full border border-[var(--accent-purple)]/40 bg-[var(--accent-purple)]/10 px-3 py-1 text-[10px] font-bold text-[var(--accent-purple)] uppercase tracking-wider">
-            AI-Powered Classification
-          </span>
+          <p className="text-[10px] text-[var(--tx-muted)] font-semibold mt-1">
+            Drag & Drop or Browse Files
+          </p>
         </>
       )}
     </div>
   );
 };
 
-// ─── Main Page ───────────────────────────────────────────────────
+// ─── Validation Status Checklist Row ────────────────────────────────────────
+const ValidationStatusCheck = ({ label, isUploaded }: { label: string; isUploaded: boolean }) => {
+  return (
+    <div className="flex items-center gap-2 text-[11px] font-semibold py-1">
+      {isUploaded ? (
+        <span className="flex h-4 w-4 items-center justify-center rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">✓</span>
+      ) : (
+        <span className="flex h-4 w-4 items-center justify-center rounded bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-bold">⚠</span>
+      )}
+      <span className={isUploaded ? 'text-[var(--tx-primary)]' : 'text-[var(--tx-muted)]'}>
+        {label} {isUploaded ? 'Uploaded' : 'Missing'}
+      </span>
+    </div>
+  );
+};
+
+// ─── Main Ingestion Page ───────────────────────────────────────────────────
 export default function UploadPage() {
   const queryClient = useQueryClient();
   const { state, setLot } = useDashboard();
   const { lotDatabase, predicting, error: waferError, predict, clearAll: clearWafer, deleteWafer } = useWaferAi();
   const [showWaferResults, setShowWaferResults] = useState(true);
-
-  const [files, setFiles] = useState<Record<string, FileUploadState>>({
-    STIL:         { file: null, status: 'idle', message: '' },
-    ATE_LOG:      { file: null, status: 'idle', message: '' },
-    ATPG_REPORT:  { file: null, status: 'idle', message: '' },
-    MBIST_REPORT: { file: null, status: 'idle', message: '' },
-    LBIST_REPORT: { file: null, status: 'idle', message: '' },
-  });
-
-  const [isAnalyzing, setIsAnalyzing]   = useState(false);
-  const [progress, setProgress]         = useState<ProgressEvent[]>([]);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
-  const handleFileChange = (type: string, file: File | null) => {
-    setFiles(prev => ({
-      ...prev,
-      [type]: { ...prev[type], file, status: file ? 'success' : 'idle' },
-    }));
-  };
+  // Validation States
+  const [cards, setCards] = useState<Record<string, CardState>>({
+    STIL:         { file: null, status: 'idle', error: null, report: null },
+    ATE_LOG:      { file: null, status: 'idle', error: null, report: null },
+    ATPG_REPORT:  { file: null, status: 'idle', error: null, report: null },
+    MBIST_REPORT: { file: null, status: 'idle', error: null, report: null },
+    LBIST_REPORT: { file: null, status: 'idle', error: null, report: null },
+  });
+  const [activeCardKey, setActiveCardKey] = useState<string | null>(null);
+  const [activeReport, setActiveReport] = useState<ValidationReport | null>(null);
+  const [activeTab, setActiveTab] = useState<'summary' | 'issues' | 'columns'>('summary');
+  const [history, setHistory] = useState<HistoryItem[]>([]);
 
+  // Fetch Lots list
   const { data: storedLots, refetch: refetchLots } = useQuery({
     queryKey: ['stored-lots'],
     queryFn: async () => {
       const { data } = await apiClient.get('/lots');
-      // If the endpoint wraps the array, extract it
       return Array.isArray(data) ? data : data?.data ?? [];
     },
   });
+
+  // Fetch validation history list
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/model-validation/history?limit=10');
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.items || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch history', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  const handleUpload = async (key: string, file: File) => {
+    setActiveCardKey(key);
+    setCards(prev => ({
+      ...prev,
+      [key]: { ...prev[key], file, status: 'validating', error: null }
+    }));
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/model-validation/validate', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) throw new Error(`Upload failed (Status: ${res.status})`);
+      const data = await res.json();
+      
+      setCards(prev => ({
+        ...prev,
+        [key]: { ...prev[key], status: 'success', report: data.report, error: null }
+      }));
+      setActiveReport(data.report);
+      setActiveTab('summary');
+      fetchHistory();
+      refetchLots();
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['stored-lots'] });
+      toast.success('Validation Successful', `${key} file parsed cleanly.`);
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err?.message || 'Schema parse mismatch.';
+      setCards(prev => ({
+        ...prev,
+        [key]: { ...prev[key], status: 'error', error: errMsg, report: null }
+      }));
+      toast.error('Validation Failed', `${key}: ${errMsg}`);
+    }
+  };
+
+  const handleClearCard = (key: string) => {
+    setCards(prev => ({
+      ...prev,
+      [key]: { file: null, status: 'idle', error: null, report: null }
+    }));
+    if (activeCardKey === key) {
+      setActiveCardKey(null);
+      setActiveReport(null);
+    } else {
+      const clearedReport = cards[key]?.report;
+      if (clearedReport && activeReport && activeReport.validation_id === clearedReport.validation_id) {
+        setActiveReport(null);
+      }
+    }
+  };
+
+  const handleCardClick = (key: string) => {
+    const card = cards[key];
+    if (card && card.report) {
+      setActiveCardKey(key);
+      setActiveReport(card.report);
+      setActiveTab('summary');
+    }
+  };
+
+  const loadReportDetails = async (id: string) => {
+    const foundCardEntry = Object.entries(cards).find(([_, c]) => c.report?.validation_id === id);
+    if (foundCardEntry) {
+      const [key, card] = foundCardEntry;
+      setActiveCardKey(key);
+      setActiveReport(card.report);
+      setActiveTab('summary');
+      return;
+    }
+
+    setActiveCardKey(null);
+    try {
+      const res = await fetch(`/api/model-validation/${id}`);
+      if (!res.ok) throw new Error('Could not fetch report details');
+      const data = await res.json();
+      setActiveReport(data.reportJson);
+      setActiveTab('summary');
+    } catch (err: any) {
+      toast.error('Error', 'Failed to load past validation details.');
+    }
+  };
 
   const handleDelete = async (id: string) => {
     try {
@@ -281,13 +462,10 @@ export default function UploadPage() {
       queryClient.invalidateQueries({ queryKey: ['stored-lots'] });
       refetchLots();
       setDeleteConfirm(null);
-      if (state.activeLotId === id) {
-        setLot(null);
-      }
-      toast.success('File Deleted', 'Lot run history wiped out.');
+      if (state.activeLotId === id) setLot(null);
+      toast.success('Job Deleted', 'Analysis run data wiped.');
     } catch {
-      console.error('Delete failed');
-      toast.error('Deletion Failed', 'Unable to wipe out the lot run history.');
+      toast.error('Deletion Failed', 'Unable to wipe lot analysis data.');
     }
   };
 
@@ -299,424 +477,436 @@ export default function UploadPage() {
       refetchLots();
       setDeleteConfirm(null);
       setLot(null);
-      toast.success('Fleet Cleared', 'All forensic lots deleted.');
+      toast.success('Jobs Cleared', 'All stored analysis jobs deleted.');
     } catch {
-      console.error('Delete all failed');
-      toast.error('Clear All Failed', 'Unable to delete all forensic lots.');
+      toast.error('Clear Failed', 'Unable to clear jobs.');
     }
   };
 
-  const handleAnalyze = async () => {
-    if (!files.STIL.file && !files.ATE_LOG.file) return;
-    setIsAnalyzing(true);
-    setProgress([]);
-
-    const formData = new FormData();
-    if (files.STIL.file)         formData.append('STIL',         files.STIL.file);
-    if (files.ATE_LOG.file)      formData.append('ATE_LOG',      files.ATE_LOG.file);
-    if (files.ATPG_REPORT.file)  formData.append('ATPG_REPORT',  files.ATPG_REPORT.file);
-    if (files.MBIST_REPORT.file) formData.append('MBIST_REPORT', files.MBIST_REPORT.file);
-    if (files.LBIST_REPORT.file) formData.append('LBIST_REPORT', files.LBIST_REPORT.file);
-
-    try {
-      const { data } = await apiClient.post('/upload', formData);
-      const uploadId = data.uploadId ?? data.data?.uploadId;
-      if (!uploadId) {
-        throw new Error('No upload id returned from server');
-      }
-      const eventSource = new EventSource(uploadProgressUrl(uploadId));
-
-      eventSource.onmessage = (e) => {
-        const newEvents: ProgressEvent[] = JSON.parse(e.data);
-        setProgress(prev => [...prev, ...newEvents]);
-        if (newEvents.some(ev => ev.stage === 'Complete')) {
-          const completeEvent = newEvents.find(ev => ev.stage === 'Complete');
-          if (completeEvent?.data?.lotId) {
-            setLot(completeEvent.data.lotId);
-          }
-          eventSource.close();
-          setIsAnalyzing(false);
-          refetchLots();
-          toast.success('Ingestion Finished', 'forensics pipeline executed successfully.');
-        } else if (newEvents.some(ev => ev.stage === 'Error')) {
-          eventSource.close();
-          setIsAnalyzing(false);
-          toast.error('Pipeline Error', 'Forensic pipeline analysis encountered errors.');
-        }
-      };
-      eventSource.onerror = () => {
-        eventSource.close();
-        setIsAnalyzing(false);
-      };
-    } catch (error: unknown) {
-      console.error('Upload failed:', error);
-      toast.error('Upload failed', 'Check that the API is running and files are valid.');
-      setIsAnalyzing(false);
-    }
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
-  const canAnalyze = (files.STIL.file || files.ATE_LOG.file) && !isAnalyzing;
+  const getQueueStatus = (status: CardState['status']) => {
+    if (status === 'success') return '100%';
+    if (status === 'validating') return 'Validating...';
+    if (status === 'error') return 'Error';
+    return 'Pending';
+  };
+
+  const hasWafers = Object.values(lotDatabase).some(l => l.wafers.length > 0);
 
   return (
-    <div className="space-y-8 animate-fade-in pb-12">
+    <div className="space-y-6 animate-fade-in pb-12">
       <PageHeader
-        title="Forensic Data Ingestion"
-        subtitle="Upload STIL, ATE Logs, and ATPG Reports to power the analysis engine"
-        badge="v2.4"
+        title="Test Data Ingestion & Validation"
+        subtitle="Upload ATE test artifacts, wafer maps, and diagnostic reports for AI-driven analysis."
       />
 
-      {/* Primary upload row */}
-      <div>
-        <p className="text-[11px] font-bold text-[var(--tx-muted)] uppercase tracking-[0.15em] mb-3">
-          Required Files
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <UploadCard
-            title="STIL"
-            description="Standard Test Interface Language"
-            extension=".stil"
-            iconColor="var(--accent-green)"
-            onFileSelect={(f) => handleFileChange('STIL', f)}
-            selectedFile={files.STIL.file}
-          />
-          <UploadCard
-            title="ATE LOG"
-            description="Tester log — SmarTest, G-XL, CSV"
-            extension=".log / .csv"
-            iconColor="var(--accent-blue)"
-            onFileSelect={(f) => handleFileChange('ATE_LOG', f)}
-            selectedFile={files.ATE_LOG.file}
-          />
-          <UploadCard
-            title="ATPG REPORT"
-            description="Fault report — TetraMAX, Modus"
-            extension=".rpt"
-            iconColor="var(--accent-purple)"
-            onFileSelect={(f) => handleFileChange('ATPG_REPORT', f)}
-            selectedFile={files.ATPG_REPORT.file}
-          />
-        </div>
-      </div>
-
-      {/* Optional files */}
-      <div>
-        <p className="text-[11px] font-bold text-[var(--tx-muted)] uppercase tracking-[0.15em] mb-3">
-          Optional BIST Reports
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <UploadCard
-            title="MBIST REPORT"
-            description="Memory BIST diagnostics"
-            extension=".rpt / .xml"
-            iconColor="var(--accent-blue)"
-            onFileSelect={(f) => handleFileChange('MBIST_REPORT', f)}
-            selectedFile={files.MBIST_REPORT.file}
-          />
-          <UploadCard
-            title="LBIST REPORT"
-            description="Logic BIST diagnostics"
-            extension=".rpt / .xml"
-            iconColor="var(--accent-cyan)"
-            onFileSelect={(f) => handleFileChange('LBIST_REPORT', f)}
-            selectedFile={files.LBIST_REPORT.file}
-          />
-        </div>
-      </div>
-
-      {/* Validation hint */}
-      {!files.STIL.file && !files.ATE_LOG.file && (
-        <div
-          className="flex items-center gap-2.5 px-4 py-3 rounded-[var(--radius-md)] border text-[12px] text-[var(--tx-secondary)]"
-          style={{ background: 'rgba(245,158,11,0.04)', borderColor: 'rgba(245,158,11,0.15)' }}
-        >
-          <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent-amber)] shrink-0" />
-          At minimum, upload a STIL file or ATE LOG to begin analysis.
-        </div>
-      )}
-
-      {/* Analyze CTA */}
-      <div className="flex justify-center">
-        <button
-          id="analyze-btn"
-          onClick={handleAnalyze}
-          disabled={!canAnalyze}
-          className={`
-            flex items-center gap-2.5 px-10 py-3.5 rounded-[var(--radius-lg)] font-bold text-[14px] transition-all duration-200
-            ${canAnalyze
-              ? 'bg-[var(--accent-blue)] text-white hover:bg-blue-600 shadow-[0_0_24px_rgba(59,130,246,0.3)] hover:shadow-[0_0_32px_rgba(59,130,246,0.4)] hover:-translate-y-0.5 active:translate-y-0'
-              : 'bg-white/[0.04] text-[var(--tx-muted)] cursor-not-allowed border border-[var(--border)]'
-            }
-          `}
-        >
-          {isAnalyzing && (
-            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-          )}
-          {isAnalyzing ? 'Analysing…' : 'Run Analysis'}
-        </button>
-      </div>
-
-      {/* Progress Timeline */}
-      {progress.length > 0 && (
-        <div
-          className="w-full max-w-2xl mx-auto rounded-[var(--radius-xl)] border overflow-hidden"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
-        >
-          <div
-            className="px-5 py-3 border-b flex items-center justify-between"
-            style={{ borderColor: 'var(--border)' }}
-          >
-            <span className="text-[11px] font-bold text-[var(--tx-muted)] uppercase tracking-widest">
-              Analysis Pipeline
-            </span>
-            <span className="rounded-full bg-[var(--accent-blue)]/10 px-2 py-0.5 text-[9px] font-bold text-[var(--accent-blue)] uppercase tracking-widest border border-[var(--accent-blue)]/20 leading-none">{progress.length} steps</span>
+      {/* Main Grid: Uploads vs Status & Reports */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        
+        {/* Left Column (2/3 width) - Inputs & Image Uploads */}
+        <div className="xl:col-span-2 space-y-6">
+          
+          {/* Section 1: Primary Test Inputs */}
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-sm font-bold text-[var(--tx-primary)]">Primary Test Inputs</h3>
+              <p className="text-[11px] text-[var(--tx-secondary)]">Required test patterns and test logs</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {(['STIL', 'ATE_LOG', 'ATPG_REPORT'] as const).map((key) => (
+                <ValidationCard
+                  key={key}
+                  type={key}
+                  config={CARD_CONFIGS[key]}
+                  cardState={cards[key]}
+                  isActive={activeCardKey === key}
+                  onFileSelect={(file) => handleUpload(key, file)}
+                  onClear={() => handleClearCard(key)}
+                  onCardClick={() => handleCardClick(key)}
+                />
+              ))}
+            </div>
           </div>
-          <div className="px-5 py-4 space-y-0">
-            {progress.map((event, i) => (
-              <ProgressStep key={i} event={event} index={i} total={progress.length} />
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* ── Wafer Image Upload (AI Classification) ────────── */}
-      <div>
-        {/* Section header */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <p className="text-[11px] font-bold text-[var(--tx-muted)] uppercase tracking-[0.15em]">
-              Wafer Image Upload
-            </p>
-            <span className="rounded-full border border-[var(--accent-purple)]/30 bg-[var(--accent-purple)]/10 px-2 py-0.5 text-[9px] font-bold text-[var(--accent-purple)] uppercase tracking-wider">
-              AI · ResNet50
-            </span>
+          {/* Section 2: Diagnostic Reports */}
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-sm font-bold text-[var(--tx-primary)]">Diagnostic Reports</h3>
+              <p className="text-[11px] text-[var(--tx-secondary)]">Optional internal circuit BIST outputs</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {(['MBIST_REPORT', 'LBIST_REPORT'] as const).map((key) => (
+                <ValidationCard
+                  key={key}
+                  type={key}
+                  config={CARD_CONFIGS[key]}
+                  cardState={cards[key]}
+                  isActive={activeCardKey === key}
+                  onFileSelect={(file) => handleUpload(key, file)}
+                  onClear={() => handleClearCard(key)}
+                  onCardClick={() => handleCardClick(key)}
+                />
+              ))}
+            </div>
           </div>
-          {/* Show/hide results toggle + clear */}
-          <div className="flex items-center gap-2">
-            {Object.values(lotDatabase).some(l => l.wafers.length > 0) && (
-              <>
-                <button
-                  onClick={() => setShowWaferResults(v => !v)}
-                  className="flex items-center gap-1 text-[10px] text-[var(--tx-muted)] hover:text-[var(--tx-secondary)] transition"
-                >
-                  {showWaferResults ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                  {showWaferResults ? 'Hide' : 'Show'} Results
-                </button>
-                <button
-                  onClick={async () => {
-                    await clearWafer();
-                    queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-                    toast.success('Wafers Cleared', 'All wafer image assignments cleared.');
-                  }}
-                  className="flex items-center gap-1 text-[10px] text-[var(--tx-muted)] hover:text-red-400 transition"
-                >
-                  <X className="h-3 w-3" /> Clear
-                </button>
-              </>
+
+          {/* Section 3: Wafer Image Analysis */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-[var(--tx-primary)]">Wafer Image Analysis</h3>
+                <p className="text-[11px] text-[var(--tx-secondary)]">Upload wafer maps and defect images for AI classification and spatial analysis.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded border border-[var(--accent-purple)]/30 bg-[var(--accent-purple)]/5 px-2 py-0.5 text-[9px] font-semibold text-[var(--accent-purple)]">
+                  AI Classification Enabled
+                </span>
+                {hasWafers && (
+                  <>
+                    <button
+                      onClick={() => setShowWaferResults(v => !v)}
+                      className="flex items-center gap-1 text-[10px] text-[var(--tx-muted)] hover:text-[var(--tx-secondary)] transition"
+                    >
+                      {showWaferResults ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      {showWaferResults ? 'Hide' : 'Show'} Wafers
+                    </button>
+                    <button
+                      onClick={async () => {
+                        await clearWafer();
+                        queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+                        toast.success('Assignment Cleared', 'Wafer maps reset.');
+                      }}
+                      className="text-[10px] text-[var(--tx-muted)] hover:text-red-400 transition"
+                    >
+                      Clear
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <WaferDropZone
+              predicting={predicting}
+              onFiles={async (imgs) => {
+                for (const img of imgs) await predict(img);
+                queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+              }}
+            />
+
+            {waferError && (
+              <div className="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-2.5">
+                <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
+                <p className="text-xs text-red-400">{waferError}</p>
+              </div>
+            )}
+
+            {/* AI Results table */}
+            {showWaferResults && hasWafers && (
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)]/40 overflow-hidden shadow-sm">
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--border)] bg-[var(--bg-secondary)]/30">
+                  <div className="flex items-center gap-1.5">
+                    <Brain className="h-3.5 w-3.5 text-[var(--accent-purple)]" />
+                    <span className="text-[10px] font-bold text-[var(--tx-secondary)] uppercase tracking-wider">AI Wafer Diagnostics</span>
+                  </div>
+                </div>
+                <div className="overflow-x-auto text-[11px] scrollbar-none">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-[var(--bg-secondary)] border-b border-[var(--border)] text-[9px] font-bold uppercase text-[var(--tx-muted)]">
+                        <th className="py-2 px-3">File Name</th>
+                        <th className="py-2 px-3">Class</th>
+                        <th className="py-2 px-3">Confidence</th>
+                        <th className="py-2 px-3">Lot ID</th>
+                        <th className="py-2 px-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(lotDatabase).flatMap(([lotId, lotData]) =>
+                        lotData.wafers.map((wafer, idx) => {
+                          const color = DEFECT_COLORS[wafer.class] ?? '#94a3b8';
+                          return (
+                            <tr key={`${wafer.name}-${idx}`} className="border-b border-[var(--border)]/30 hover:bg-[var(--bg-hover)]/20">
+                              <td className="py-2.5 px-3">
+                                <p className="font-semibold text-white truncate max-w-[150px]">{wafer.name}</p>
+                                <p className="text-[8.5px] text-[var(--tx-muted)] font-mono">{new Date(wafer.timestamp).toLocaleTimeString()}</p>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase"
+                                  style={{ background: `${color}12`, border: `1px solid ${color}35`, color }}
+                                >
+                                  {wafer.class}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono" style={{ color }}>
+                                {wafer.confidence.toFixed(1)}%
+                              </td>
+                              <td className="py-2.5 px-3 font-mono font-semibold text-[var(--tx-secondary)]">
+                                {wafer.lot}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <button
+                                  onClick={async () => {
+                                    await deleteWafer(wafer.lot, wafer.name);
+                                    queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+                                    toast.success('Removed', 'Wafer classification assignment cleared.');
+                                  }}
+                                  className="text-[var(--tx-muted)] hover:text-[var(--accent-red)] transition-colors p-1"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             )}
           </div>
+
+          {/* Upload Queue Section */}
+          <div className="card glass p-4 space-y-3">
+            <h3 className="text-xs font-bold text-[var(--tx-primary)] uppercase tracking-wider border-b border-[var(--border)] pb-2 flex items-center gap-2">
+              <Loader2 className="h-4 w-4 text-[var(--accent-blue)]" />
+              Upload Queue
+            </h3>
+            <div className="space-y-1.5">
+              {[
+                { name: 'STIL', status: getQueueStatus(cards.STIL.status) },
+                { name: 'ATE LOG', status: getQueueStatus(cards.ATE_LOG.status) },
+                { name: 'ATPG REPORT', status: getQueueStatus(cards.ATPG_REPORT.status) },
+                { name: 'MBIST', status: getQueueStatus(cards.MBIST_REPORT.status) },
+                { name: 'LBIST', status: getQueueStatus(cards.LBIST_REPORT.status) },
+                { name: 'Wafer Image', status: predicting ? 'Classifying...' : (hasWafers ? '100%' : 'Pending') },
+              ].map((q, idx) => (
+                <div key={idx} className="flex justify-between items-center text-xs font-mono py-1.5">
+                  <span className="text-[var(--tx-secondary)]">{q.name}</span>
+                  <span className="flex-1 border-b border-dotted border-[var(--border)] mx-2 h-2" />
+                  <span className={q.status === '100%' ? 'text-[var(--accent-green)] font-semibold' : 'text-[var(--tx-muted)]'}>
+                    {q.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
         </div>
 
-        {/* Drop zone */}
-        <WaferDropZone
-          predicting={predicting}
-          onFiles={async (imgs) => {
-            for (const img of imgs) await predict(img);
-          }}
-        />
-
-        {/* AI error */}
-        {waferError && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/8 px-4 py-2.5">
-            <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
-            <p className="text-xs text-red-400">{waferError}</p>
+        {/* Right Column (1/3 width) - Validation Status & Report Details */}
+        <div className="xl:col-span-1 space-y-6">
+          
+          {/* Validation Status checklist */}
+          <div className="card glass p-4 space-y-3">
+            <h3 className="text-xs font-bold text-[var(--tx-primary)] uppercase tracking-wider border-b border-[var(--border)] pb-2 flex items-center gap-2">
+              <Check className="h-4 w-4 text-[var(--accent-green)] font-bold" />
+              Validation Status
+            </h3>
+            <div className="space-y-1">
+              <ValidationStatusCheck label="STIL" isUploaded={cards.STIL.status === 'success'} />
+              <ValidationStatusCheck label="ATE Log" isUploaded={cards.ATE_LOG.status === 'success'} />
+              <ValidationStatusCheck label="ATPG Report" isUploaded={cards.ATPG_REPORT.status === 'success'} />
+              <ValidationStatusCheck label="MBIST" isUploaded={cards.MBIST_REPORT.status === 'success'} />
+              <ValidationStatusCheck label="LBIST" isUploaded={cards.LBIST_REPORT.status === 'success'} />
+              <ValidationStatusCheck label="Wafer Image" isUploaded={hasWafers} />
+            </div>
           </div>
-        )}
 
-        {/* Results table — all classified wafers */}
-        {showWaferResults && Object.values(lotDatabase).some(l => l.wafers.length > 0) && (
-          <div
-            className="mt-4 rounded-[var(--radius-xl)] border border-[var(--border)]/80 bg-[var(--bg-card)]/50 backdrop-blur-md overflow-hidden shadow-2xl transition-all duration-300"
-          >
-            {/* Table header */}
-            <div
-              className="flex items-center justify-between px-4 py-3 border-b"
-              style={{ borderColor: 'var(--border)' }}
-            >
-              <div className="flex items-center gap-2">
-                <Brain className="h-3.5 w-3.5 text-[var(--accent-purple)]" />
-                <span className="text-[11px] font-bold text-[var(--tx-muted)] uppercase tracking-widest">
-                  AI Classification Results
+          {/* Validation Report details OR history */}
+          {activeReport ? (
+            <div className="card glass p-4 space-y-4 relative">
+              <button
+                onClick={() => setActiveReport(null)}
+                className="absolute top-3.5 right-3.5 text-[var(--tx-muted)] hover:text-white transition"
+                title="Close report"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="border-b border-[var(--border)] pb-3">
+                <span className="text-[9px] font-bold text-[var(--tx-muted)] uppercase tracking-wider font-mono">Report Details</span>
+                <h3 className="text-xs font-bold text-[var(--tx-primary)] truncate max-w-[200px]" title={activeReport.filename}>{activeReport.filename}</h3>
+                <p className="text-[9px] text-[var(--tx-muted)] mt-0.5 font-mono">
+                  {new Date(activeReport.timestamp).toLocaleTimeString()} · {formatBytes(activeReport.file_size_bytes)}
+                </p>
+              </div>
+
+              {/* Validation Status & score */}
+              <div className="flex items-center justify-between text-[11px] font-semibold bg-[var(--bg-elevated)]/20 border border-[var(--border)] p-2.5 rounded-lg">
+                <span className={`status-live font-bold uppercase leading-none ${
+                  activeReport.status === 'VALID' ? 'text-[var(--accent-green)] border-[var(--accent-green)]/35 bg-[var(--accent-green)]/8' :
+                  activeReport.status === 'WARNING' ? 'text-[var(--accent-amber)] border-[var(--accent-amber)]/35 bg-[var(--accent-amber)]/8' :
+                  'text-[var(--accent-red)] border-[var(--accent-red)]/35 bg-[var(--accent-red)]/8'
+                }`}>
+                  {activeReport.status}
+                </span>
+                <span className="text-[var(--tx-secondary)] font-mono">
+                  {Math.round(activeReport.confidence_score * 100)}% Match
                 </span>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="rounded-full bg-[var(--accent-purple)]/10 px-2 py-0.5 text-[9px] font-bold text-[var(--accent-purple)] border border-[var(--accent-purple)]/20 leading-none">
-                  {Object.values(lotDatabase).reduce((a, l) => a + l.wafers.length, 0)} wafers classified
-                </span>
+
+              {/* Subtabs inside active report */}
+              <div className="flex border-b border-[var(--border)] text-[11px] gap-3">
                 <button
-                  onClick={async () => {
-                    await clearWafer();
-                    queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-                    toast.success('Cleared', 'All AI classification results removed.');
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-sm)] text-[10px] font-bold uppercase tracking-wider border transition-all active:scale-95"
-                  style={{
-                    background: 'rgba(239,68,68,0.08)',
-                    borderColor: 'rgba(239,68,68,0.22)',
-                    color: 'var(--accent-red)',
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.18)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(239,68,68,0.08)')}
+                  onClick={() => setActiveTab('summary')}
+                  className={`pb-1.5 font-medium transition-colors ${
+                    activeTab === 'summary' ? 'border-b border-[var(--accent-blue)] text-[var(--tx-primary)]' : 'text-[var(--tx-muted)] hover:text-[var(--tx-secondary)]'
+                  }`}
                 >
-                  <Trash2 className="h-3 w-3" />
-                  Clear All
+                  Summary
                 </button>
+                <button
+                  onClick={() => setActiveTab('issues')}
+                  className={`pb-1.5 font-medium transition-colors ${
+                    activeTab === 'issues' ? 'border-b border-[var(--accent-blue)] text-[var(--tx-primary)]' : 'text-[var(--tx-muted)] hover:text-[var(--tx-secondary)]'
+                  }`}
+                >
+                  Issues ({activeReport.issues.length})
+                </button>
+                {activeReport.column_stats && activeReport.column_stats.length > 0 && (
+                  <button
+                    onClick={() => setActiveTab('columns')}
+                    className={`pb-1.5 font-medium transition-colors ${
+                      activeTab === 'columns' ? 'border-b border-[var(--accent-blue)] text-[var(--tx-primary)]' : 'text-[var(--tx-muted)] hover:text-[var(--tx-secondary)]'
+                    }`}
+                  >
+                    Columns
+                  </button>
+                )}
+              </div>
+
+              {/* Tab views */}
+              <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                {activeTab === 'summary' && (
+                  <div className="space-y-3 text-[11px]">
+                    <div className="grid grid-cols-2 gap-2 text-center">
+                      <div className="bg-[var(--bg-elevated)]/25 p-2 rounded border border-[var(--border)]">
+                        <p className="text-[9px] text-[var(--tx-muted)] uppercase font-mono">Rows</p>
+                        <p className="font-bold text-white mt-0.5">{activeReport.row_count ?? 'N/A'}</p>
+                      </div>
+                      <div className="bg-[var(--bg-elevated)]/25 p-2 rounded border border-[var(--border)]">
+                        <p className="text-[9px] text-[var(--tx-muted)] uppercase font-mono">Columns</p>
+                        <p className="font-bold text-white mt-0.5">{activeReport.column_count ?? 'N/A'}</p>
+                      </div>
+                    </div>
+                    {/* Pipeline */}
+                    <div className="p-3 border border-[var(--accent-blue)]/20 rounded bg-[var(--accent-blue)]/5">
+                      <p className="text-[10px] text-[var(--tx-secondary)] font-medium font-mono">Suggested Pipeline:</p>
+                      <code className="text-[9.5px] font-mono text-[var(--accent-cyan)] block mt-1 break-all bg-black/20 p-1.5 rounded">
+                        {activeReport.recommended_pipeline}
+                      </code>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'issues' && (
+                  <div className="space-y-2">
+                    {activeReport.issues.length === 0 ? (
+                      <p className="text-[11px] text-[var(--accent-green)] font-semibold text-center py-4">
+                        ✓ No schema mismatches found.
+                      </p>
+                    ) : (
+                      activeReport.issues.map((issue, idx) => (
+                        <div
+                          key={idx}
+                          className={`p-2.5 border rounded text-[10.5px] ${
+                            issue.severity === 'error' ? 'border-red-500/20 bg-red-500/5 text-red-400' :
+                            'border-amber-500/20 bg-amber-500/5 text-amber-400'
+                          }`}
+                        >
+                          <span className="font-bold font-mono text-[9px] mr-1">[{issue.code}]</span>
+                          {issue.message}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {activeTab === 'columns' && activeReport.column_stats && (
+                  <div className="space-y-2 text-[10.5px] font-mono">
+                    {activeReport.column_stats.map((col, idx) => (
+                      <div key={idx} className="flex justify-between border-b border-[var(--border)]/45 pb-1">
+                        <span className="font-semibold text-white truncate max-w-[120px]" title={col.name}>{col.name}</span>
+                        <span className="text-[var(--tx-muted)]">{col.dtype}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr style={{ background: 'var(--bg-secondary)' }}>
-                    {['File Name', 'Defect Class', 'Confidence', 'Assigned LOT', 'Defect Type', 'Status', 'Actions'].map(h => (
-                      <th
-                        key={h}
-                        className="py-2 px-4 text-[9px] font-bold uppercase tracking-wider text-[var(--tx-muted)] border-b"
-                        style={{ borderColor: 'var(--border)' }}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(lotDatabase).flatMap(([, lotData]) =>
-                    lotData.wafers.map((wafer, i) => {
-                      const color = DEFECT_COLORS[wafer.class] ?? '#8b9cc8';
-                      const isNormal = wafer.class === 'Normal';
-                      return (
-                        <tr
-                          key={`${wafer.name}-${i}`}
-                          className="border-b transition-colors hover:bg-[var(--bg-hover)]/30"
-                          style={{ borderColor: 'rgba(30,45,69,0.5)' }}
-                        >
-                          {/* File name */}
-                          <td className="py-3 px-4">
-                            <p className="text-xs font-medium text-[var(--tx-primary)] truncate max-w-[160px]">{wafer.name}</p>
-                            <p className="text-[9px] text-[var(--tx-disabled)] font-mono">
-                              {new Date(wafer.timestamp).toLocaleTimeString('en-US', { hour12: false })}
-                            </p>
-                          </td>
-
-                          {/* Defect class badge */}
-                          <td className="py-3 px-4">
-                            <span
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide"
-                              style={{ background: `${color}22`, border: `1px solid ${color}55`, color }}
-                            >
-                              <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: color }} />
-                              {wafer.class}
-                            </span>
-                          </td>
-
-                          {/* Confidence */}
-                          <td className="py-3 px-4">
-                            <div className="flex items-center gap-2">
-                              <div className="w-16 h-1.5 rounded-full bg-[var(--bg-hover)] overflow-hidden">
-                                <div
-                                  className="h-full rounded-full"
-                                  style={{ width: `${wafer.confidence}%`, background: color }}
-                                />
-                              </div>
-                              <span className="text-[10px] font-bold font-mono" style={{ color }}>
-                                {wafer.confidence.toFixed(1)}%
-                              </span>
-                            </div>
-                          </td>
-
-                          {/* Lot */}
-                          <td className="py-3 px-4">
-                            <span className="text-xs font-bold font-mono text-[var(--tx-secondary)]">{wafer.lot}</span>
-                          </td>
-
-                          {/* Defect type */}
-                          <td className="py-3 px-4">
-                            <span className="text-[10px] text-[var(--tx-muted)]">{lotDatabase[wafer.lot]?.defect_type ?? wafer.class}</span>
-                          </td>
-
-                          {/* Pass/Fail */}
-                          <td className="py-3 px-4">
-                            {isNormal ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
-                                <Check className="h-3 w-3" /> PASS
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/25">
-                                <AlertTriangle className="h-3 w-3" /> DEFECT
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Actions */}
-                          <td className="py-3 px-4">
-                            <button
-                              onClick={async () => {
-                                await deleteWafer(wafer.lot, wafer.name);
-                                queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-                                toast.success('Wafer Removed', `${wafer.name} has been removed from assignment.`);
-                              }}
-                              className="p-1.5 rounded-lg border border-red-500/20 bg-red-500/5 text-red-400 hover:bg-red-500/15 hover:border-red-500/45 hover:text-red-300 transition-all active:scale-95 flex items-center justify-center shrink-0"
-                              title="Delete Wafer Assignment"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+          ) : (
+            
+            /* History of past validations */
+            <div className="card glass p-4 space-y-3">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-[var(--tx-muted)] border-b border-[var(--border)] pb-2 font-mono">
+                Recent Validations
+              </h3>
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                {history.length === 0 ? (
+                  <p className="text-[10px] text-[var(--tx-muted)] text-center py-4 font-mono">No recent validations found.</p>
+                ) : (
+                  history.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => loadReportDetails(item.id)}
+                      className="p-2 border border-[var(--border)] rounded-lg hover:border-[var(--border-bright)] cursor-pointer bg-[var(--bg-card)]/50 transition-colors flex items-center justify-between text-[11px]"
+                    >
+                      <div className="truncate max-w-[140px]">
+                        <p className="font-semibold text-[var(--tx-primary)] truncate">{item.filename}</p>
+                        <p className="text-[8.5px] text-[var(--tx-muted)] font-mono">{item.fileCategory.replace('tabular_', '').toUpperCase()}</p>
+                      </div>
+                      <span className={`badge-pill text-[9px] px-2 py-0.5 rounded-full font-mono ${
+                        item.status === 'VALID' ? 'bg-[var(--accent-green)]/10 text-[var(--accent-green)]' :
+                        item.status === 'WARNING' ? 'bg-[var(--accent-amber)]/10 text-[var(--accent-amber)]' :
+                        'bg-[var(--accent-red)]/10 text-[var(--accent-red)]'
+                      }`}>
+                        {item.status}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
+        </div>
+
       </div>
 
-      {/* ── Stored Lots ──────────────────────────────── */}
+      {/* ── Stored Forensic Jobs (Recent Analysis Jobs) ────────── */}
       <div className="pt-4">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 border-b border-[var(--border)] pb-2.5">
           <div className="flex items-center gap-3">
-            <h3
-              className="text-[15px] font-bold text-[var(--tx-primary)]"
-              style={{ letterSpacing: '-0.015em' }}
-            >
-              Stored Forensic Lots
+            <h3 className="text-[15px] font-bold text-[var(--tx-primary)]" style={{ letterSpacing: '-0.015em' }}>
+              Recent Analysis Jobs
             </h3>
             {storedLots && storedLots.length > 0 && (
-              <span className="rounded-full bg-[var(--border)] px-2 py-0.5 text-[9px] font-bold text-[var(--tx-secondary)] border border-[var(--border-bright)] leading-none">{storedLots.length} files</span>
+              <span className="rounded-full bg-[var(--border)] px-2 py-0.5 text-[9px] font-bold text-[var(--tx-secondary)] border border-[var(--border-bright)] leading-none">
+                {storedLots.length} Active
+              </span>
             )}
           </div>
 
           {storedLots && storedLots.length > 0 && (
             deleteConfirm === 'all' ? (
-              <div
-                className="flex items-center gap-2 px-3 py-2 rounded-[var(--radius-md)] border text-[12px]"
-                style={{ background: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.18)' }}
-              >
-                <span className="text-[var(--accent-red)] font-semibold">Confirm delete all?</span>
-                <button
-                  onClick={handleDeleteAll}
-                  className="text-[var(--accent-red)] font-bold hover:underline"
-                >Yes</button>
-                <button
-                  onClick={() => setDeleteConfirm(null)}
-                  className="text-[var(--tx-muted)] hover:text-[var(--tx-secondary)]"
-                >Cancel</button>
+              <div className="flex items-center gap-2 px-2.5 py-1 rounded border text-[11px] bg-red-950/20 border-red-500/30">
+                <span className="text-[var(--accent-red)] font-semibold">Confirm clear?</span>
+                <button onClick={handleDeleteAll} className="text-[var(--accent-red)] font-bold hover:underline">Yes</button>
+                <button onClick={() => setDeleteConfirm(null)} className="text-[var(--tx-muted)]">Cancel</button>
               </div>
             ) : (
               <button
                 onClick={() => setDeleteConfirm('all')}
-                className="flex items-center justify-center bg-[rgba(239,68,68,0.1)] border border-[rgba(239,68,68,0.2)] text-[var(--accent-red)] hover:bg-[rgba(239,68,68,0.2)] transition text-[10px] font-bold uppercase tracking-wider py-1.5 px-3 rounded-[var(--radius-sm)]"
+                className="bg-[rgba(239,68,68,0.1)] border border-[rgba(239,68,68,0.2)] text-[var(--accent-red)] hover:bg-[rgba(239,68,68,0.18)] transition text-[10px] font-bold uppercase tracking-wider py-1 px-2.5 rounded"
               >
                 Clear All
               </button>
@@ -735,20 +925,18 @@ export default function UploadPage() {
                   className={`
                     relative cursor-pointer rounded-[var(--radius-xl)] border p-5 transition-all duration-300 group hover:-translate-y-0.5
                     ${isActiveLot
-                      ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5 backdrop-blur-md shadow-[0_0_25px_rgba(59,130,246,0.15)]'
-                      : 'border-[var(--border)]/80 bg-[var(--bg-card)]/50 backdrop-blur-sm hover:border-[var(--border-bright)] hover:bg-[var(--bg-hover)]/60 hover:shadow-[0_8px_30px_rgba(0,0,0,0.2)]'
+                      ? 'border-[var(--accent-blue)] bg-[var(--accent-blue)]/5 shadow-[0_0_20px_rgba(59,130,246,0.12)]'
+                      : 'border-[var(--border)] bg-[var(--bg-card)]/50 hover:border-[var(--border-bright)] hover:bg-[var(--bg-hover)]/30'
                     }
                   `}
                 >
-                  {/* Active badge */}
                   {isActiveLot && (
                     <div className="absolute top-3 right-3">
                       <span className="rounded-full bg-[var(--accent-blue)]/10 px-2 py-0.5 text-[9px] font-bold text-[var(--accent-blue)] border border-[var(--accent-blue)]/20 leading-none">Active</span>
                     </div>
                   )}
 
-                  {/* Header */}
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center justify-between mb-3">
                     <span className="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded border border-[var(--accent-blue)]/30 text-[var(--accent-blue)] bg-[var(--accent-blue)]/5">
                       LOT
                     </span>
@@ -756,52 +944,40 @@ export default function UploadPage() {
                     {deleteConfirm === lot.id ? (
                       <div className="flex items-center gap-1.5 text-[11px]">
                         <span className="text-[var(--accent-red)] font-semibold">Delete?</span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleDelete(lot.id); }}
-                          className="text-[var(--accent-red)] font-bold hover:underline"
-                        >Yes</button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}
-                          className="text-[var(--tx-muted)]"
-                        >No</button>
+                        <button onClick={(e) => { e.stopPropagation(); handleDelete(lot.id); }} className="text-[var(--accent-red)] font-bold hover:underline">Yes</button>
+                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }} className="text-[var(--tx-muted)]">No</button>
                       </div>
                     ) : (
                       <button
                         onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lot.id); }}
-                        className="opacity-0 group-hover:opacity-100 px-2 py-1 text-[9px] font-bold text-[var(--tx-muted)] hover:text-[var(--accent-red)] hover:bg-[rgba(239,68,68,0.08)] border border-[var(--border)] rounded-[var(--radius-sm)] transition-all font-mono uppercase tracking-wider"
-                        aria-label="Delete lot"
+                        className="opacity-0 group-hover:opacity-100 px-2 py-0.5 text-[9px] font-bold text-[var(--tx-muted)] hover:text-[var(--accent-red)] hover:bg-[rgba(239,68,68,0.08)] border border-[var(--border)] rounded transition-all font-mono"
                       >
                         Delete
                       </button>
                     )}
                   </div>
 
-                  {/* Lot info */}
-                  <h4 className="text-[13px] font-bold text-[var(--tx-primary)] mb-0.5">
+                  <h4 className="text-[13px] font-bold text-[var(--tx-primary)] mb-1">
                     Lot {lot.lotNumber}
                   </h4>
                   <div className="flex flex-wrap gap-1.5 mb-4">
                     {lot.product && (
-                      <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--tx-secondary)] border border-[var(--border-bright)] leading-none">{lot.product}</span>
+                      <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--tx-secondary)] border border-[var(--border-bright)]">{lot.product}</span>
                     )}
                     {lot.tester && (
-                      <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--tx-secondary)] border border-[var(--border-bright)] leading-none">{lot.tester}</span>
+                      <span className="rounded bg-[var(--border)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--tx-secondary)] border border-[var(--border-bright)]">{lot.tester}</span>
                     )}
                   </div>
 
-                  {/* Stats row */}
-                  <div
-                    className="grid grid-cols-2 gap-3 pt-3 border-t"
-                    style={{ borderColor: 'var(--border)' }}
-                  >
+                  <div className="grid grid-cols-2 gap-3 pt-3 border-t border-[var(--border)] text-[11px] font-mono">
                     <div>
-                      <p className="text-[9px] font-bold text-[var(--tx-muted)] uppercase tracking-widest">Patterns</p>
-                      <p className="text-[13px] font-mono mt-0.5">{lot._count?.patterns ?? '—'}</p>
+                      <p className="text-[9px] font-bold text-[var(--tx-muted)] uppercase tracking-wider">Patterns</p>
+                      <p className="text-[12px] font-bold mt-0.5 text-white">{lot._count?.patterns ?? '—'}</p>
                     </div>
                     <div>
-                      <p className="text-[9px] font-bold text-[var(--tx-muted)] uppercase tracking-widest">Uploaded</p>
-                      <p className="text-[13px] font-mono mt-0.5">
-                        {new Date(lot.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
+                      <p className="text-[9px] font-bold text-[var(--tx-muted)] uppercase tracking-wider">Created</p>
+                      <p className="text-[12px] mt-0.5 text-[var(--tx-secondary)]">
+                        {new Date(lot.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       </p>
                     </div>
                   </div>
@@ -810,22 +986,20 @@ export default function UploadPage() {
             })}
           </div>
         ) : (
-          <div
-            className="rounded-[var(--radius-2xl)] border p-16 flex flex-col items-center justify-center text-center"
-            style={{ background: 'var(--bg-card)', borderColor: 'var(--border)' }}
-          >
-            <span className="inline-block px-2.5 py-1 text-[10px] font-bold text-[var(--tx-disabled)] border border-[var(--border)] bg-[var(--bg-card)] rounded uppercase tracking-wider mb-2.5 font-mono">
-              EMPTY LOT STORAGE
+          <div className="rounded-2xl border p-12 flex flex-col items-center justify-center text-center bg-[var(--bg-card)]/30 border-[var(--border)]">
+            <span className="inline-block px-2.5 py-1 text-[9px] font-bold text-[var(--tx-disabled)] border border-[var(--border)] bg-[var(--bg-card)] rounded uppercase tracking-wider mb-3.5 font-mono">
+              Empty Job Cache
             </span>
             <p className="text-[13px] font-semibold text-[var(--tx-secondary)] mb-1">
-              No stored files found
+              No analysis jobs available
             </p>
             <p className="text-[11px] text-[var(--tx-muted)]">
-              Uploaded lots will appear here after analysis
+              Upload test data to begin analysis.
             </p>
           </div>
         )}
       </div>
+
     </div>
   );
 }
